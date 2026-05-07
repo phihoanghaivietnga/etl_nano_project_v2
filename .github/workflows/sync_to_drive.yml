@@ -3,7 +3,7 @@ name: Sync Markdown to Google Drive
 on:
   push:
     paths:
-      - '**.md'
+      - '**/*.md'
 
 jobs:
   sync:
