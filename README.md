@@ -23,7 +23,7 @@ ETL_Nano_Project_V2/
 │   └── archive/            # Lưu trữ tài liệu phiên bản cũ
 ├── scripts/                # CÁC SCRIPT VẬN HÀNH VÀ TỰ ĐỘNG HÓA
 │   └── upload_to_drive.py  # Script đồng bộ tri thức lên Google Drive
-├── src/                    # Mã nguồn chính của ứng dụng
+├── src/                    # Mã nguồn chính của ứng dụng, phân tách giữa Core logic và Job thực thi.
 │   ├── core/               # Lớp cha, Logger, Database Connection
 │   ├── jobs/               # Logic đồng bộ các bảng cụ thể
 │   ├── ui/                 # Giao diện Streamlit (Runner & Verify)
@@ -33,20 +33,6 @@ ETL_Nano_Project_V2/
 └── .github/
     └── workflows/
         └── sync_to_drive.yml # File cấu hình Trigger GitHub Actions
-
-- /config: Chứa settings.yaml và tables.yaml để cấu hình hệ thống và danh sách bảng.
-- /docs/knowledge: Tầng tri thức cốt lõi chứa 9 file GEM điều phối.
-  - GEM_NAVIGATION.md: Chỉ dẫn tìm kiếm tri thức.
-  - GEM_GUIDE.md: Thứ tự ưu tiên đọc tài liệu.
-  - GEM_CODE_MAP.md: Sơ đồ các lớp và hàm trong mã nguồn.
-  - GEM_CODE_SNIPPETS.md: Thư viện mã mẫu chuẩn.
-  - GEM_DATA_FLOW.md: Mô tả luồng dữ liệu Production -> Staging -> Datamart.
-  - GEM_DB_SCHEMAS.md: Chi tiết cấu trúc bảng và schema database.
-  - GEM_AUTO_PIPELINE.md: Chi tiết vận hành engine chạy tự động.
-  - GEM_DEPENDENCY_GRAPH.md: Đồ thị mối quan hệ giữa các module.
-  - GEM_ERROR_CONTEXT.md: Bối cảnh và cách xử lý các mã lỗi (E-ID).
-- /src: Mã nguồn chính của hệ thống, phân tách giữa Core logic và Job thực thi.
-- /src/db/templates/sql: Nơi lưu trữ duy nhất các script SQL, tránh viết cứng SQL trong code Python.
 
 ## 3. Ý nghĩa các file GEM tri thức (docs/knowledge/)
 - GEM_NAVIGATION.md: Chỉ dẫn tìm kiếm tri thức.
