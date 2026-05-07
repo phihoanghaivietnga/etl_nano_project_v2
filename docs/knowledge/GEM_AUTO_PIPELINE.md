@@ -1,0 +1,1 @@
+# GEM_AUTO_PIPELINE.md
