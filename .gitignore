@@ -11,3 +11,4 @@ wheels/
 
 
 /config/etl-nano-project-v2-22b521dbed64.json
+/config/.env

@@ -4,6 +4,7 @@
 Hệ thống ETL phiên bản v2 được thiết kế để chuẩn hóa luồng dữ liệu từ Production sang Datamart theo kiến trúc Modular và lập trình hướng đối tượng (OOP). Hệ thống đảm bảo tính thống nhất giữa chế độ chạy Tự động (Auto) và Thủ công (Manual).
 Hy vọng test lần cuối
 Lần cuối 2
+Lần cuối 3
 
 ## 2. Cấu trúc thư mục
 ETL_Nano_Project_V2/
