@@ -1,45 +1,60 @@
 # REPORT_CHANGES.md
 
-## Phạm vi cập nhật
+## Phạm vi cập nhật mới (Diff Sync local -> Drive)
 - File chính: `scripts/upload_to_drive_from_local.py`
-- File cấu hình: `config/.env`
-- Tầng tri thức: `docs/knowledge/GEM_CODE_MAP.md`, `docs/knowledge/GEM_ERROR_CONTEXT.md`
+- Tri thức: `docs/knowledge/GEM_SYNC_WORKFLOW.md`, `docs/knowledge/GEM_CODE_MAP.md`
+- Tài liệu tổng quan: `agents.md`, `README.md`
+- Prompt báo cáo: `docs/prompts/20260508_1330_change_upload_from_local_v1.md`
 
-## Nội dung thay đổi
+## Nội dung thay đổi chính
 
-### 1) Bỏ nhập tham số runtime qua argparse
-- Đã loại bỏ toàn bộ `argparse` trong script upload local.
-- Script chuyển sang đọc cấu hình cố định từ `config/.env`.
+### 1) Tái cấu trúc đồng bộ thư mục trên Drive
+- Bổ sung các hàm:
+  - `find_folder_in_drive()`
+  - `create_folder_in_drive()`
+  - `ensure_drive_folder_path()`
+- Cơ chế:
+  - Kiểm tra thư mục đã tồn tại thì tái sử dụng ID.
+  - Nếu chưa tồn tại thì tạo mới.
+  - Dùng cache folder ID để giảm query lặp và tăng hiệu năng.
 
-### 2) Chuẩn hóa 3 biến cấu hình trong `config/.env`
-- `GDRIVE_CREDENTIALS_FILE=config/etl-nano-project-v2-22b521dbed64.json`
-- `GDRIVE_FOLDER_ID=YOUR_DRIVE_FOLDER_ID`
-- `GDRIVE_ROOT_DIR=.`
+### 2) Triển khai Diff Sync thay vì upload create toàn bộ
+- Thay thế logic upload cũ bằng hàm `sync_markdown_file()`:
+  - Search file theo `name + parent folder id`.
+  - Nếu chưa tồn tại: `create` -> trạng thái `Created`.
+  - Nếu tồn tại: so sánh checksum local với checksum lưu trên Drive.
+  - Nếu không đổi: `Up-to-date` (bỏ qua upload).
+  - Nếu đổi: `update` -> trạng thái `Updated`.
 
-### 3) Bổ sung cơ chế đọc và kiểm tra cấu hình
-- Thêm `load_env_file()` để đọc `.env` không cần thư viện ngoài.
-- Thêm `load_runtime_config()` để:
-  - Kiểm tra đủ 3 biến bắt buộc.
-  - Kiểm tra tồn tại file credentials.
+### 3) Cơ chế checksum cho Google Docs
+- Vì file Google Docs thường không có `md5Checksum` nguồn, script lưu `local_md5` vào `appProperties`.
+- Lần chạy sau dùng `appProperties.local_md5` để xác định file có thay đổi hay không.
 
-### 4) Sửa lỗi không tìm thấy file `.md`
-- Thêm `resolve_root_dir()` để xử lý đúng các case cấu hình root phổ biến.
-- Thêm validate `root.exists()` và `root.is_dir()` trước khi quét.
-- In log rõ ràng:
-  - Thư mục đang quét
-  - Số lượng file `.md` tìm thấy
-- Giữ nguyên quét đệ quy `rglob('*.md')`, loại trừ `.git`.
+### 4) Tối ưu hiệu suất
+- Chỉ upload khi file thay đổi (`Updated`) hoặc chưa tồn tại (`Created`).
+- Bỏ qua file không đổi (`Up-to-date`).
+- Giảm thời gian chạy nhờ cache folder và skip file không cần sync.
 
-## Lý do gốc của lỗi đã xử lý
-- Root directory truyền vào trước đây dễ bị resolve sai khi người dùng nhập trùng tên repo, gây quét sai thư mục nên không thấy `.md`.
-- Script cũ thiếu bước validate và debug path trước khi quét.
+### 5) Bảo mật thông tin
+- Loại trừ đồng bộ các file nhạy cảm:
+  - `config/token.json`
+  - `config/etl-nano-project-v2-oauth-credentials.json`
+  - `config/.env`
+- Loại trừ toàn bộ thư mục `config/` và `.venv/` khỏi luồng upload.
 
-## Cách dùng sau cập nhật
-1. Mở `config/.env` và điền `GDRIVE_FOLDER_ID` thật.
-2. Chạy script:
-   - `python scripts/upload_to_drive_from_local.py`
+### 6) Log đối soát
+- Script in log từng file theo trạng thái:
+  - `Created`
+  - `Updated`
+  - `Up-to-date`
+  - `Skipped`
+  - `Error`
+- In tổng kết cuối phiên và danh sách thư mục Drive đã tạo mới.
 
-## Kết quả mong đợi
-- Không cần nhập tham số mỗi lần chạy.
-- Script quét đúng file `.md` tại root project và `docs/knowledge`.
-- Nếu cấu hình sai, script báo lỗi rõ ràng thay vì báo rỗng khó hiểu.
+## Cập nhật tri thức và tài liệu
+- Tạo mới `GEM_SYNC_WORKFLOW.md` mô tả quy trình Diff Sync.
+- Cập nhật `GEM_CODE_MAP.md` theo cấu trúc hàm mới.
+- Bổ sung mục đích `GEM_SYNC_WORKFLOW.md` vào:
+  - `agents.md`
+  - `README.md`
+  (chỉ thêm, không xóa thông tin cũ theo yêu cầu).

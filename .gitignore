@@ -11,4 +11,6 @@ wheels/
 
 
 /config/etl-nano-project-v2-22b521dbed64.json
+/config/etl-nano-project-v2-oauth-credentials.json
+/config/token.json
 /config/.env

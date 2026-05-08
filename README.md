@@ -13,7 +13,7 @@ ETL_Nano_Project_V2/
 ├── .env                    # Lưu trữ biến môi trường và kết nối DB
 ├── config/                 # Cấu hình hệ thống và danh sách bảng
 ├── docs/
-│   ├── knowledge/       # Tầng tri thức GEM (9 file GEM_xxx.md)
+│   ├── knowledge/       # Tầng tri thức GEM
 		├── GEM_NAVIGATION.md: Chỉ dẫn tìm kiếm tri thức.
 		├── GEM_GUIDE.md: Thứ tự ưu tiên đọc tài liệu.
 		├── GEM_CODE_MAP.md: Sơ đồ các lớp và hàm trong mã nguồn.
@@ -23,6 +23,8 @@ ETL_Nano_Project_V2/
 		├── GEM_AUTO_PIPELINE.md: Chi tiết vận hành engine chạy tự động.
 		├── GEM_DEPENDENCY_GRAPH.md: Đồ thị mối quan hệ giữa các module.
 		├── GEM_ERROR_CONTEXT.md: Bối cảnh và cách xử lý các mã lỗi (E-ID).
+		├── GEM_TECHNICAL_STANDARDS.md: Tiêu chuẩn kỹ thuật và xác thực Google Drive.
+		├── GEM_SYNC_WORKFLOW.md: Quy trình đồng bộ sai khác (Diff Sync) giữa local và Google Drive.
 │   └── archive/            # Lưu trữ tài liệu phiên bản cũ
 ├── scripts/                # CÁC SCRIPT VẬN HÀNH VÀ TỰ ĐỘNG HÓA
 │   └── upload_to_drive.py  # Script đồng bộ tri thức lên Google Drive
@@ -47,3 +49,5 @@ ETL_Nano_Project_V2/
 - GEM_AUTO_PIPELINE.md: Chi tiết vận hành engine chạy tự động.
 - GEM_DEPENDENCY_GRAPH.md: Đồ thị mối quan hệ giữa các module.
 - GEM_ERROR_CONTEXT.md: Bối cảnh và cách xử lý các mã lỗi (E-ID).
+- GEM_TECHNICAL_STANDARDS.md: Tiêu chuẩn kỹ thuật và xác thực Google Drive.
+- GEM_SYNC_WORKFLOW.md: Quy trình đồng bộ sai khác (Diff Sync) giữa local và Google Drive.
