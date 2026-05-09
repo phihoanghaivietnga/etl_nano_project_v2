@@ -1,63 +1,56 @@
 # REPORT_CHANGES.md
 
-## Phạm vi cập nhật mới (Blacklist v2 cho all-file sync)
-- File chính: `scripts/upload_to_drive_from_local.py`
-- Tri thức: `docs/knowledge/GEM_SYNC_WORKFLOW.md`, `docs/knowledge/GEM_TECHNICAL_STANDARDS.md`
-- Prompt báo cáo: `docs/prompts/20260508_1540_change_upload_all_from_local_v2.md`
+## Phạm vi cập nhật theo yêu cầu 20260509_1045_change_group_file_v1
+- Script chính: `scripts/upload_to_drive_from_local.py`
+- Tài liệu người dùng: `docs/specifications/`
+- Tri thức kỹ thuật: `docs/knowledge/GEM_CODE_MAP.md`, `docs/knowledge/GEM_SYNC_WORKFLOW.md`
+- Nhật ký dự án: `PROJECT_CHRONICLE.md`
+- File yêu cầu cần ghi báo cáo: `docs/prompts/20260509_1045_change_group_file_v1.md`
 
-## Nội dung thay đổi chính
+## Nội dung đã thực hiện
 
-### 1) Tái cấu trúc đồng bộ thư mục trên Drive
-- Bổ sung các hàm:
-  - `find_folder_in_drive()`
-  - `create_folder_in_drive()`
-  - `ensure_drive_folder_path()`
-- Cơ chế:
-  - Kiểm tra thư mục đã tồn tại thì tái sử dụng ID.
-  - Nếu chưa tồn tại thì tạo mới.
-  - Dùng cache folder ID để giảm query lặp và tăng hiệu năng.
+### 1) Thiết lập bộ tài liệu người dùng
+- Tạo thư mục `docs/specifications/`.
+- Tạo 3 tài liệu:
+  - `Dac_ta_yeu_cau_nghiep_vu_y_te.md`
+  - `Thiet_ke_kien_truc_he_thong_chi_tiet.md`
+  - `Huong_dan_su_dung_va_van_hanh_he_thong.md`
 
-### 2) Triển khai lọc `.gitignore` + loại trừ cứng
-- Bổ sung `pathspec` để đọc và áp dụng `.gitignore` tại root dự án.
-- Bổ sung hàm:
-  - `load_gitignore_spec()`
-  - `normalize_relative_posix()`
-  - `classify_skip_reason()`
-- Loại trừ bắt buộc (dù có/không có trong `.gitignore`):
-  - File: `credentials.json`, `token.json`, `.gitignore`, `.gitattributes`, `.python-version`, các tệp `.env`
-  - Thư mục: `.git`, `.venv`, `__pycache__`
-- Log bỏ qua theo định dạng: `[Excluded][reason] <relative_path>`.
+### 2) Cập nhật quy tắc ánh xạ nhóm tri thức
+- Cập nhật `GEM_CODE_MAP.md` với 4 nhóm chuẩn:
+  - `CORE_LOGIC`
+  - `ETL_PROCESS`
+  - `INTERFACE`
+  - `KNOWLEDGE_BASE`
+- Ghi rõ mục tiêu chia nhóm để tạo file Master phục vụ merge tri thức cho NotebookLM.
 
-### 2.1) Lọc ngay từ vòng quét ban đầu
-- Điều chỉnh luồng quét từ `candidate_files` thành:
-  - `all_files`: tập file thô trước lọc
-  - `candidate_files`: tập file còn lại sau khi blacklist theo tên + `pathspec`
-- File blacklist bị chặn ngay ở vòng quét đầu, không đi vào bước tính MD5.
-- Bổ sung log số lượng:
-  - `Tìm thấy <N> file (trước khi lọc)`
-  - `Số file sau lọc ban đầu: <M>`
+### 3) Nâng cấp script đồng bộ Drive từ local
+- Bổ sung hằng số ánh xạ nhóm -> file Master:
+  - `MASTER_CORE_LOGIC.md`
+  - `MASTER_ETL_PROCESS.md`
+  - `MASTER_INTERFACE.md`
+  - `MASTER_KNOWLEDGE_BASE.md`
+- Hoàn thiện lọc tệp:
+  - Áp dụng `.gitignore` qua `pathspec`.
+  - Loại trừ cứng: `.gitignore`, `credentials.json`, `token.json`, `.git`, `.venv`, `__pycache__`.
+- Thêm merge logic:
+  - Tạo thư mục tạm `temp_merged/`.
+  - Tạo file Master theo từng nhóm.
+  - Mỗi file Master có mục lục nguồn.
+  - Mỗi nội dung nguồn tách bằng `### SOURCE: <đường dẫn>` và bọc code block theo đuôi file.
+- Cập nhật đối soát MD5:
+  - Tính MD5 local bằng `hashlib`.
+  - So sánh với `md5Checksum` trên Drive, fallback `appProperties.local_md5`.
+  - Chỉ update khi sai khác, create nếu chưa có.
+- Giữ luồng OAuth2 Desktop App và lưu `token.json`.
+- Bảo đảm mọi file `.md` upload dạng Google Docs.
 
-### 3) Smart Sync MD5 cho cả Markdown và file gốc
-- Đổi `sync_markdown_file()` thành `sync_file()` để xử lý đa định dạng.
-- Tính MD5 local bằng `hashlib` cho mọi file.
-- Cơ chế so sánh checksum:
-  - Ưu tiên `appProperties.local_md5`
-  - Fallback sang `md5Checksum` của Drive
-- Chỉ `update` khi checksum sai khác, nếu trùng thì `Up-to-date`.
+### 4) Cập nhật tài liệu tri thức và nhật ký dự án
+- Cập nhật `GEM_SYNC_WORKFLOW.md` với luồng:
+  - Quét file -> Lọc tệp -> Ánh xạ nhóm -> Gộp nội dung -> Đối soát MD5 -> Upload.
+- Tạo `PROJECT_CHRONICLE.md` và ghi dấu mốc xây dựng hệ thống gộp tri thức đa tầng cho NotebookLM.
 
-### 4) Xử lý định dạng upload
-- `.md`: giữ convert sang Google Docs (`mimeType='application/vnd.google-apps.document'`).
-- Các tệp khác (`.py`, `.sql`, `.yml`, `.yaml`, ...): upload dạng tệp gốc với `MediaFileUpload`.
-
-### 5) Tối ưu log và đối soát
-- In `ROOT_FOLDER_ID=<folder_id>` ngay đầu phiên chạy để AI Test đối chiếu.
-- In tổng số file trước lọc và kết quả theo trạng thái `Created/Updated/Up-to-date/Skipped/Error`.
-- Log rõ ràng trạng thái `Excluded` khi tệp bị loại bởi blacklist theo tên hoặc `.gitignore`.
-
-## Cập nhật tri thức và tài liệu
-- Cập nhật `GEM_SYNC_WORKFLOW.md`:
-  - Bổ sung quy trình lọc `.gitignore` và loại trừ cứng.
-  - Bổ sung mục "Danh sách các tệp không đồng bộ" và lý do không upload tệp cấu hình hệ thống.
-  - Bổ sung cơ chế MD5 cho `.md` và file gốc.
-- Cập nhật `GEM_TECHNICAL_STANDARDS.md`:
-  - Bổ sung thư viện chuẩn `pathspec` và `hashlib`.
+### 5) Cập nhật báo cáo trong file yêu cầu
+- Bổ sung đầy đủ phần `# BÁO CÁO CỦA THỢ CODE` trong:
+  - `docs/prompts/20260509_1045_change_group_file_v1.md`
+- Có ghi rõ dòng bắt buộc theo yêu cầu và mô tả chi tiết các việc đã làm.

@@ -1,91 +1,60 @@
 # GEM_SYNC_WORKFLOW.md
 
 ## Mục tiêu
-- Chuẩn hóa quy trình đồng bộ sai khác (Diff Sync) từ local lên Google Drive.
-- Giảm thời gian vận hành bằng cách chỉ cập nhật file có thay đổi.
+- Chuẩn hóa luồng đồng bộ tri thức từ local lên Google Drive theo cơ chế sai khác.
+- Tạo bộ file Master theo nhóm để phục vụ tạo tri thức cho NotebookLM.
 
 ## Phạm vi áp dụng
 - Script: `scripts/upload_to_drive_from_local.py`
-- Kiểu tệp: toàn bộ file hợp lệ theo quy tắc lọc
-- Đích: Google Drive (Markdown chuyển Google Docs, các tệp khác giữ định dạng gốc)
+- Nguồn dữ liệu: toàn bộ file trong `GDRIVE_ROOT_DIR` sau khi lọc hợp lệ.
+- Đích: Google Drive, trong đó mọi file `.md` được chuyển thành Google Docs.
 
-## Luồng đồng bộ chuẩn
+## Luồng tự động hóa chuẩn
 
-### Bước 1: Quét dữ liệu local
-- Quét đệ quy tất cả file từ `GDRIVE_ROOT_DIR`.
-- Áp dụng lọc `.gitignore` bằng `pathspec`.
-- Loại trừ bắt buộc (dù có/không có trong `.gitignore`):
-  - File: `credentials.json`, `token.json`
+### Bước 1: Quét file
+- Quét đệ quy tất cả file từ thư mục gốc cấu hình `GDRIVE_ROOT_DIR`.
+- Thu tập file thô ban đầu để chuẩn bị lọc.
+
+### Bước 2: Lọc tệp
+- Áp dụng `pathspec` với quy tắc `.gitignore` tại root dự án.
+- Loại trừ cứng các mục:
+  - File: `.gitignore`, `credentials.json`, `token.json`
   - Thư mục: `.git`, `.venv`, `__pycache__`
-- Log file bị loại trừ theo dạng `[Skipped][reason]`.
+- Chỉ giữ các file hợp lệ cho các bước tiếp theo.
 
-## Danh sách các tệp không đồng bộ
+### Bước 3: Ánh xạ nhóm
+- Ánh xạ file vào 4 nhóm quy chuẩn:
+  - `CORE_LOGIC`
+  - `ETL_PROCESS`
+  - `INTERFACE`
+  - `KNOWLEDGE_BASE`
+- Ánh xạ này là cơ sở để tạo file Master theo ngữ cảnh chức năng.
 
-### Nhóm loại trừ theo tên (blacklist cứng)
-- `.gitignore`
-- `.gitattributes`
-- `.python-version`
-- `credentials.json`
-- `token.json`
-- Các tệp `.env` (ví dụ: `.env`, `.env.local`, `prod.env`)
+### Bước 4: Gộp nội dung
+- Tạo thư mục tạm `temp_merged/` tại root.
+- Với mỗi nhóm, tạo một file Master `.md`.
+- Cấu trúc bắt buộc của file Master:
+  - Có mục lục nguồn ở đầu file.
+  - Mỗi tệp nguồn được ghi theo header `### SOURCE: <đường dẫn tệp>`.
+  - Nội dung tệp nguồn được bọc trong code block Markdown theo loại tệp.
 
-### Nhóm loại trừ theo thư mục
-- `.git`
-- `.venv`
-- `__pycache__`
+### Bước 5: Đối soát MD5
+- Tính MD5 local bằng `hashlib` cho file cần upload (bao gồm file Master).
+- Tìm file tương ứng trên Drive theo `name + parent`.
+- Lấy `md5Checksum` trên Drive để so sánh.
+- Nếu thiếu `md5Checksum` thì fallback `appProperties.local_md5`.
+- Chỉ `update` khi mã MD5 sai khác, nếu chưa có file thì `create`.
 
-### Nhóm loại trừ theo quy tắc `.gitignore`
-- Mọi tệp/thư mục khớp mẫu trong `.gitignore` tại root dự án.
+### Bước 6: Upload
+- Xác thực OAuth2 Desktop App và lưu `token.json`.
+- Upload file lên đúng thư mục Drive theo đường dẫn tương đối.
+- Tất cả file `.md` (kể cả file Master) dùng:
+  - `mimeType='application/vnd.google-apps.document'`
 
-### Lý do không đồng bộ các tệp cấu hình hệ thống
-- Tránh lộ thông tin nhạy cảm (token, credentials, biến môi trường).
-- Tránh đồng bộ các tệp phục vụ môi trường cục bộ hoặc kiểm soát phiên bản.
-- Giảm nhiễu dữ liệu trên Drive và tăng tốc độ đồng bộ.
+## Kết quả và đối soát
+- Log chi tiết theo trạng thái: `Created`, `Updated`, `Up-to-date`, `Skipped`, `Error`.
+- In tổng kết cuối phiên và danh sách thư mục Drive đã tạo.
 
-### Bước 2: Đồng bộ cấu trúc thư mục
-- Từ đường dẫn tương đối của mỗi file, dựng cây thư mục trên Drive.
-- Với từng cấp thư mục:
-  - Nếu đã tồn tại trong parent: tái sử dụng folder ID.
-  - Nếu chưa tồn tại: tạo mới và lưu lại folder ID.
-- Dùng cache folder để giảm số lần query API.
-
-### Bước 3: Diff Sync cho từng file
-- Tìm file trên Drive theo `name + parent folder id`.
-- Nếu không có file:
-  - Tạo mới (`create`) và trạng thái `Created`.
-  - Với `.md`: tạo dưới dạng Google Docs (`mimeType='application/vnd.google-apps.document'`).
-  - Với tệp khác: upload dạng tệp gốc (Media Upload).
-- Nếu có file:
-  - Tính MD5 local bằng `hashlib`.
-  - So sánh theo thứ tự:
-    - `appProperties.local_md5` (ưu tiên)
-    - `md5Checksum` của file Drive (fallback)
-  - Nếu giống nhau: bỏ qua upload, trạng thái `Up-to-date`.
-  - Nếu khác nhau: cập nhật (`update`), trạng thái `Updated`.
-
-### Bước 3.1: Chính sách checksum theo định dạng
-- `.md` (Google Docs): dùng `appProperties.local_md5` để đối soát ổn định.
-- File gốc (py/sql/yml/yaml/...): ưu tiên `md5Checksum` của Drive, đồng thời lưu `appProperties.local_md5` để thống nhất cơ chế.
-
-### Bước 4: Ghi log đối soát
-- Log theo từng file với 1 trong các trạng thái:
-  - `Created`
-  - `Updated`
-  - `Up-to-date`
-  - `Skipped`
-  - `Error`
-- In tổng kết cuối phiên đồng bộ.
-- In danh sách thư mục Drive đã tạo mới để kiểm tra tính thống nhất với local.
-
-## Quy tắc bảo mật
-- Token OAuth và credentials phải nằm trong `config/`.
-- Không đồng bộ file nhạy cảm:
-  - `config/token.json`
-  - `config/etl-nano-project-v2-oauth-credentials.json`
-  - `config/.env`
-- Không log nội dung token/secret.
-
-## Tiêu chí hoàn thành
-- Script nhận diện đúng file không đổi (`Up-to-date`).
-- Script chỉ `update` file thay đổi và `create` file mới.
-- Cấu trúc thư mục trên Drive khớp với local theo đường dẫn tương đối.
+## Quy tắc an toàn
+- Không đồng bộ file nhạy cảm và file hệ thống.
+- Không ghi log nội dung token hoặc thông tin bí mật.

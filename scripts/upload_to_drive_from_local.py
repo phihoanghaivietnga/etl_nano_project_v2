@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import hashlib
 import mimetypes
+import shutil
 from pathlib import Path
 
 import pathspec
@@ -16,22 +17,27 @@ ENV_FILE = 'config/.env'
 OAUTH_CREDENTIALS_FILE = 'config/etl-nano-project-v2-oauth-credentials.json'
 TOKEN_FILE = 'config/token.json'
 GITIGNORE_FILE = '.gitignore'
+TEMP_MERGED_DIR = 'temp_merged'
+
+MASTER_FILE_BY_GROUP = {
+    'CORE_LOGIC': 'MASTER_CORE_LOGIC.md',
+    'ETL_PROCESS': 'MASTER_ETL_PROCESS.md',
+    'INTERFACE': 'MASTER_INTERFACE.md',
+    'KNOWLEDGE_BASE': 'MASTER_KNOWLEDGE_BASE.md',
+}
 
 FORCED_EXCLUDED_FILES = {
     'credentials.json',
     'token.json',
     '.gitignore',
-    '.gitattributes',
-    '.python-version',
 }
 FORCED_EXCLUDED_DIRS = {'.git', '.venv', '__pycache__'}
 
 
 def load_env_file(env_path: Path) -> dict:
-    """Đọc file .env theo định dạng KEY=VALUE (không phụ thuộc thư viện ngoài)."""
     values = {}
     if not env_path.exists() or not env_path.is_file():
-        raise FileNotFoundError(f"Không tìm thấy file cấu hình: {env_path}")
+        raise FileNotFoundError(f'Không tìm thấy file cấu hình: {env_path}')
 
     for raw_line in env_path.read_text(encoding='utf-8').splitlines():
         line = raw_line.strip()
@@ -41,7 +47,6 @@ def load_env_file(env_path: Path) -> dict:
         key, value = line.split('=', 1)
         key = key.strip()
         value = value.strip().strip('"').strip("'")
-
         if key:
             values[key] = value
 
@@ -49,7 +54,6 @@ def load_env_file(env_path: Path) -> dict:
 
 
 def resolve_root_dir(root_dir_value: str, project_root: Path) -> Path:
-    """Chuẩn hóa ROOT_DIR, xử lý cả đường dẫn tương đối/tuyệt đối và cấu hình dễ nhầm."""
     raw_value = (root_dir_value or '').strip()
     if not raw_value:
         raise ValueError('Biến GDRIVE_ROOT_DIR đang rỗng trong config/.env')
@@ -65,7 +69,6 @@ def resolve_root_dir(root_dir_value: str, project_root: Path) -> Path:
     if resolved.exists():
         return resolved
 
-    # Trường hợp phổ biến: cấu hình trùng tên repo và chạy tại root repo
     if candidate.name == project_root.name:
         return project_root
 
@@ -86,9 +89,7 @@ def load_runtime_config(project_root: Path) -> tuple[str, Path]:
         missing_keys.append('GDRIVE_ROOT_DIR')
 
     if missing_keys:
-        raise ValueError(
-            f"Thiếu cấu hình trong {env_path}: {', '.join(missing_keys)}"
-        )
+        raise ValueError(f"Thiếu cấu hình trong {env_path}: {', '.join(missing_keys)}")
 
     root_dir = resolve_root_dir(root_dir_raw, project_root)
     return folder_id, root_dir
@@ -99,9 +100,7 @@ def authenticate(project_root: Path):
     token_path = (project_root / TOKEN_FILE).resolve()
 
     if not oauth_credentials_path.exists() or not oauth_credentials_path.is_file():
-        raise FileNotFoundError(
-            f"Không tìm thấy OAuth credentials file: {oauth_credentials_path}"
-        )
+        raise FileNotFoundError(f'Không tìm thấy OAuth credentials file: {oauth_credentials_path}')
 
     creds = None
     token_saved = False
@@ -114,22 +113,18 @@ def authenticate(project_root: Path):
         token_saved = True
 
     if not creds or not creds.valid:
-        flow = InstalledAppFlow.from_client_secrets_file(
-            str(oauth_credentials_path),
-            SCOPES,
-        )
+        flow = InstalledAppFlow.from_client_secrets_file(str(oauth_credentials_path), SCOPES)
         creds = flow.run_local_server(port=0)
         token_saved = True
 
     if token_saved:
         token_path.parent.mkdir(parents=True, exist_ok=True)
         token_path.write_text(creds.to_json(), encoding='utf-8')
-        print(f"Đã lưu token OAuth tại: {token_path}")
+        print(f'Đã lưu token OAuth tại: {token_path}')
     else:
-        print(f"Sử dụng token OAuth hiện có tại: {token_path}")
+        print(f'Sử dụng token OAuth hiện có tại: {token_path}')
 
     return build('drive', 'v3', credentials=creds)
-
 
 
 def load_gitignore_spec(project_root: Path):
@@ -153,10 +148,6 @@ def classify_skip_reason(project_root: Path, file_path: Path, ignore_spec) -> st
     if file_name_lower in FORCED_EXCLUDED_FILES:
         return f'forced-file:{file_path.name}'
 
-    # Chặn cứng các file .env ngay từ vòng quét đầu tiên
-    if file_name_lower == '.env' or file_name_lower.startswith('.env') or file_name_lower.endswith('.env'):
-        return f'forced-file:{file_path.name}'
-
     normalized_posix = normalize_relative_posix(project_root, file_path)
     path_parts = set(Path(normalized_posix).parts)
 
@@ -171,7 +162,7 @@ def classify_skip_reason(project_root: Path, file_path: Path, ignore_spec) -> st
 
 
 def escape_drive_query_value(value: str) -> str:
-    return value.replace("\\", "\\\\").replace("'", "\\'")
+    return value.replace('\\', '\\\\').replace("'", "\\'")
 
 
 def compute_md5(file_path: Path) -> str:
@@ -235,9 +226,9 @@ def ensure_drive_folder_path(
         if folder_id is None:
             folder_id = create_folder_in_drive(service, part, current_parent_id)
             created_folders.append(cache_key)
-            print(f"[Folder Created] {cache_key} -> {folder_id}")
+            print(f'[Folder Created] {cache_key} -> {folder_id}')
         else:
-            print(f"[Folder Exists] {cache_key} -> {folder_id}")
+            print(f'[Folder Exists] {cache_key} -> {folder_id}')
 
         folder_cache[cache_key] = folder_id
         current_parent_id = folder_id
@@ -247,9 +238,7 @@ def ensure_drive_folder_path(
 
 def find_file_in_drive(service, file_name: str, parent_id: str) -> dict | None:
     escaped_name = escape_drive_query_value(file_name)
-    query = (
-        f"name='{escaped_name}' and '{parent_id}' in parents and trashed=false"
-    )
+    query = f"name='{escaped_name}' and '{parent_id}' in parents and trashed=false"
     result = service.files().list(
         q=query,
         spaces='drive',
@@ -260,6 +249,106 @@ def find_file_in_drive(service, file_name: str, parent_id: str) -> dict | None:
     if not files:
         return None
     return files[0]
+
+
+def get_markdown_language(file_path: Path) -> str:
+    suffix = file_path.suffix.lower().lstrip('.')
+    if suffix in {'py', 'sql', 'md', 'json', 'yml', 'yaml', 'toml', 'txt', 'env', 'sh', 'bat'}:
+        return suffix
+    return 'text'
+
+
+def classify_group_by_path(relative_posix_path: str) -> str | None:
+    normalized = relative_posix_path.strip('/')
+
+    if normalized.startswith('src/core/') or normalized.startswith('config/') or normalized == '.env':
+        return 'CORE_LOGIC'
+
+    if normalized.startswith('src/jobs/') or normalized.startswith('src/db/templates/sql/'):
+        return 'ETL_PROCESS'
+
+    if normalized.startswith('src/ui/') or normalized.startswith('scripts/') or normalized == 'main.py':
+        return 'INTERFACE'
+
+    if normalized.startswith('docs/v2_knowledge/') or normalized in {'agents.md', 'README.md', 'PROJECT_CHRONICLE.md'}:
+        return 'KNOWLEDGE_BASE'
+
+    return None
+
+
+def build_grouped_file_map(project_root: Path, candidate_files: list[Path]) -> dict[str, list[Path]]:
+    grouped: dict[str, list[Path]] = {group: [] for group in MASTER_FILE_BY_GROUP}
+    for file_path in candidate_files:
+        relative_posix = normalize_relative_posix(project_root, file_path)
+        group_name = classify_group_by_path(relative_posix)
+        if group_name:
+            grouped[group_name].append(file_path)
+    return grouped
+
+
+def build_master_content(project_root: Path, group_name: str, source_files: list[Path]) -> str:
+    lines: list[str] = [
+        f'# {MASTER_FILE_BY_GROUP[group_name]}',
+        '',
+        f'## NHÓM: {group_name}',
+        '',
+        '## MỤC LỤC NGUỒN',
+    ]
+
+    if not source_files:
+        lines.extend([
+            '- Không có tệp nguồn thuộc nhóm này ở lần chạy hiện tại.',
+            '',
+            '## NỘI DUNG GỘP',
+            '',
+            'Không có nội dung để gộp.',
+        ])
+        return '\n'.join(lines) + '\n'
+
+    for source in source_files:
+        rel = normalize_relative_posix(project_root, source)
+        lines.append(f'- {rel}')
+
+    lines.extend(['', '## NỘI DUNG GỘP', ''])
+
+    for source in source_files:
+        rel = normalize_relative_posix(project_root, source)
+        language = get_markdown_language(source)
+        try:
+            source_content = source.read_text(encoding='utf-8')
+        except UnicodeDecodeError:
+            source_content = source.read_text(encoding='utf-8', errors='replace')
+
+        lines.extend([
+            f'### SOURCE: {rel}',
+            f'```{language}',
+            source_content.rstrip(),
+            '```',
+            '',
+        ])
+
+    return '\n'.join(lines).rstrip() + '\n'
+
+
+def generate_master_files(project_root: Path, grouped_files: dict[str, list[Path]]) -> list[Path]:
+    temp_merged_path = project_root / TEMP_MERGED_DIR
+    if temp_merged_path.exists() and temp_merged_path.is_dir():
+        shutil.rmtree(temp_merged_path)
+    temp_merged_path.mkdir(parents=True, exist_ok=True)
+
+    master_files: list[Path] = []
+    for group_name, master_name in MASTER_FILE_BY_GROUP.items():
+        group_sources = sorted(
+            grouped_files[group_name],
+            key=lambda path: normalize_relative_posix(project_root, path),
+        )
+        content = build_master_content(project_root, group_name, group_sources)
+        master_path = temp_merged_path / master_name
+        master_path.write_text(content, encoding='utf-8')
+        master_files.append(master_path)
+        print(f'[Master Built] {master_path}')
+
+    return master_files
 
 
 def sync_file(service, file_path: Path, parent_folder_id: str) -> tuple[str, str]:
@@ -288,9 +377,9 @@ def sync_file(service, file_path: Path, parent_folder_id: str) -> tuple[str, str
         ).execute()
         return 'Created', created['id']
 
-    remote_md5 = existing_file.get('appProperties', {}).get('local_md5')
+    remote_md5 = existing_file.get('md5Checksum')
     if not remote_md5:
-        remote_md5 = existing_file.get('md5Checksum')
+        remote_md5 = existing_file.get('appProperties', {}).get('local_md5')
 
     if remote_md5 and remote_md5 == local_md5:
         return 'Up-to-date', existing_file['id']
@@ -311,39 +400,44 @@ def sync_file(service, file_path: Path, parent_folder_id: str) -> tuple[str, str
     return 'Updated', updated['id']
 
 
+def is_in_temp_merged(project_root: Path, file_path: Path) -> bool:
+    temp_root = (project_root / TEMP_MERGED_DIR).resolve()
+    try:
+        file_path.resolve().relative_to(temp_root)
+        return True
+    except ValueError:
+        return False
+
+
 def main():
     project_root = Path(__file__).resolve().parents[1]
 
     try:
         folder_id, root = load_runtime_config(project_root)
     except Exception as exc:
-        print(f"Lỗi cấu hình: {exc}")
+        print(f'Lỗi cấu hình: {exc}')
         return
 
     if not root.exists() or not root.is_dir():
-        print(f"ROOT_DIR không hợp lệ hoặc không tồn tại: {root}")
+        print(f'ROOT_DIR không hợp lệ hoặc không tồn tại: {root}')
         return
 
-    print(f"ROOT_FOLDER_ID={folder_id}")
-    print(f"Đang quét file trong thư mục: {root}")
+    print(f'ROOT_FOLDER_ID={folder_id}')
+    print(f'Đang quét file trong thư mục: {root}')
 
     try:
         service = authenticate(project_root)
     except Exception as exc:
-        print(f"Lỗi xác thực OAuth2: {type(exc).__name__}")
+        print(f'Lỗi xác thực OAuth2: {type(exc).__name__}')
         return
 
     ignore_spec = load_gitignore_spec(project_root)
 
-    all_files = [
-        p for p in root.rglob('*')
-        if p.is_file()
-    ]
-
-    print(f"Tìm thấy {len(all_files)} file (trước khi lọc)")
+    all_files = [p for p in root.rglob('*') if p.is_file()]
+    print(f'Tìm thấy {len(all_files)} file (trước khi lọc)')
 
     if not all_files:
-        print("Không tìm thấy file nào để upload.")
+        print('Không tìm thấy file nào để upload.')
         return
 
     folder_cache: dict[str, str] = {}
@@ -356,22 +450,28 @@ def main():
         'Error': 0,
     }
 
-    # Lọc từ vòng quét ban đầu: chặn ngay file blacklist theo tên + quy tắc .gitignore
     candidate_files: list[Path] = []
     for file_path in sorted(all_files):
         skip_reason = classify_skip_reason(project_root, file_path, ignore_spec)
         relative_path = file_path.relative_to(root)
         if skip_reason:
             sync_results['Skipped'] += 1
-            print(f"[Excluded][{skip_reason}] {relative_path}")
+            print(f'[Excluded][{skip_reason}] {relative_path}')
             continue
         candidate_files.append(file_path)
 
-    print(f"Số file sau lọc ban đầu: {len(candidate_files)}")
+    print(f'Số file sau lọc ban đầu: {len(candidate_files)}')
 
-    for file_path in sorted(candidate_files):
+    grouped_files = build_grouped_file_map(project_root, candidate_files)
+    master_files = generate_master_files(project_root, grouped_files)
+    upload_files = sorted(candidate_files) + master_files
+
+    for file_path in upload_files:
         try:
-            relative_path = file_path.relative_to(root)
+            if is_in_temp_merged(project_root, file_path):
+                relative_path = Path(TEMP_MERGED_DIR) / file_path.name
+            else:
+                relative_path = file_path.relative_to(root)
 
             parent_relative = relative_path.parent
             parent_folder_id = ensure_drive_folder_path(
@@ -384,24 +484,25 @@ def main():
 
             status, file_id = sync_file(service, file_path, parent_folder_id)
             sync_results[status] += 1
-            print(f"[{status}] {relative_path} -> ID: {file_id}")
-        except Exception as e:
+            print(f'[{status}] {relative_path} -> ID: {file_id}')
+        except Exception as exc:
             sync_results['Error'] += 1
-            print(f"[Error] {file_path}: {e}")
+            print(f'[Error] {file_path}: {exc}')
 
-    print("\n=== TỔNG KẾT ĐỒNG BỘ ===")
+    print('\n=== TỔNG KẾT ĐỒNG BỘ ===')
     print(f"Created: {sync_results['Created']}")
     print(f"Updated: {sync_results['Updated']}")
     print(f"Up-to-date: {sync_results['Up-to-date']}")
     print(f"Skipped: {sync_results['Skipped']}")
     print(f"Error: {sync_results['Error']}")
 
-    print("\n=== DANH SÁCH THƯ MỤC DRIVE ĐÃ TẠO ===")
+    print('\n=== DANH SÁCH THƯ MỤC DRIVE ĐÃ TẠO ===')
     if created_folders:
         for folder in created_folders:
-            print(f"- {folder}")
+            print(f'- {folder}')
     else:
-        print("- Không tạo mới thư mục nào (đã tồn tại hoặc không có thư mục con).")
+        print('- Không tạo mới thư mục nào (đã tồn tại hoặc không có thư mục con).')
+
 
 if __name__ == '__main__':
     main()
