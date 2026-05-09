@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 import hashlib
+import mimetypes
 from pathlib import Path
+
+import pathspec
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -12,11 +15,16 @@ SCOPES = ['https://www.googleapis.com/auth/drive.file']
 ENV_FILE = 'config/.env'
 OAUTH_CREDENTIALS_FILE = 'config/etl-nano-project-v2-oauth-credentials.json'
 TOKEN_FILE = 'config/token.json'
-SENSITIVE_FILES = {
-    Path('config/token.json'),
-    Path('config/etl-nano-project-v2-oauth-credentials.json'),
-    Path('config/.env'),
+GITIGNORE_FILE = '.gitignore'
+
+FORCED_EXCLUDED_FILES = {
+    'credentials.json',
+    'token.json',
+    '.gitignore',
+    '.gitattributes',
+    '.python-version',
 }
+FORCED_EXCLUDED_DIRS = {'.git', '.venv', '__pycache__'}
 
 
 def load_env_file(env_path: Path) -> dict:
@@ -124,6 +132,44 @@ def authenticate(project_root: Path):
 
 
 
+def load_gitignore_spec(project_root: Path):
+    gitignore_path = project_root / GITIGNORE_FILE
+    if not gitignore_path.exists() or not gitignore_path.is_file():
+        return pathspec.PathSpec.from_lines('gitwildmatch', [])
+
+    lines = gitignore_path.read_text(encoding='utf-8').splitlines()
+    return pathspec.PathSpec.from_lines('gitwildmatch', lines)
+
+
+def normalize_relative_posix(project_root: Path, file_path: Path) -> str:
+    try:
+        return file_path.resolve().relative_to(project_root.resolve()).as_posix()
+    except ValueError:
+        return file_path.name
+
+
+def classify_skip_reason(project_root: Path, file_path: Path, ignore_spec) -> str | None:
+    file_name_lower = file_path.name.lower()
+    if file_name_lower in FORCED_EXCLUDED_FILES:
+        return f'forced-file:{file_path.name}'
+
+    # Chặn cứng các file .env ngay từ vòng quét đầu tiên
+    if file_name_lower == '.env' or file_name_lower.startswith('.env') or file_name_lower.endswith('.env'):
+        return f'forced-file:{file_path.name}'
+
+    normalized_posix = normalize_relative_posix(project_root, file_path)
+    path_parts = set(Path(normalized_posix).parts)
+
+    for excluded_dir in FORCED_EXCLUDED_DIRS:
+        if excluded_dir in path_parts:
+            return f'forced-dir:{excluded_dir}'
+
+    if ignore_spec.match_file(normalized_posix):
+        return 'gitignore'
+
+    return None
+
+
 def escape_drive_query_value(value: str) -> str:
     return value.replace("\\", "\\\\").replace("'", "\\'")
 
@@ -207,7 +253,7 @@ def find_file_in_drive(service, file_name: str, parent_id: str) -> dict | None:
     result = service.files().list(
         q=query,
         spaces='drive',
-        fields='files(id,name,md5Checksum,modifiedTime,appProperties)',
+        fields='files(id,name,mimeType,md5Checksum,modifiedTime,appProperties)',
         pageSize=1,
     ).execute()
     files = result.get('files', [])
@@ -216,18 +262,23 @@ def find_file_in_drive(service, file_name: str, parent_id: str) -> dict | None:
     return files[0]
 
 
-def sync_markdown_file(service, file_path: Path, parent_folder_id: str) -> tuple[str, str]:
+def sync_file(service, file_path: Path, parent_folder_id: str) -> tuple[str, str]:
     file_name = file_path.name
     local_md5 = compute_md5(file_path)
     existing_file = find_file_in_drive(service, file_name, parent_folder_id)
+    is_markdown = file_path.suffix.lower() == '.md'
+
+    upload_mimetype = 'text/markdown' if is_markdown else (mimetypes.guess_type(str(file_path))[0] or 'application/octet-stream')
 
     file_metadata = {
         'name': file_name,
         'parents': [parent_folder_id],
-        'mimeType': 'application/vnd.google-apps.document',
         'appProperties': {'local_md5': local_md5},
     }
-    media = MediaFileUpload(str(file_path), mimetype='text/markdown')
+    if is_markdown:
+        file_metadata['mimeType'] = 'application/vnd.google-apps.document'
+
+    media = MediaFileUpload(str(file_path), mimetype=upload_mimetype)
 
     if existing_file is None:
         created = service.files().create(
@@ -237,40 +288,27 @@ def sync_markdown_file(service, file_path: Path, parent_folder_id: str) -> tuple
         ).execute()
         return 'Created', created['id']
 
-    remote_md5 = (
-        existing_file.get('appProperties', {}).get('local_md5')
-        or existing_file.get('md5Checksum')
-    )
+    remote_md5 = existing_file.get('appProperties', {}).get('local_md5')
+    if not remote_md5:
+        remote_md5 = existing_file.get('md5Checksum')
+
     if remote_md5 and remote_md5 == local_md5:
         return 'Up-to-date', existing_file['id']
 
+    update_body = {
+        'name': file_name,
+        'appProperties': {'local_md5': local_md5},
+    }
+    if is_markdown:
+        update_body['mimeType'] = 'application/vnd.google-apps.document'
+
     updated = service.files().update(
         fileId=existing_file['id'],
-        body={
-            'name': file_name,
-            'mimeType': 'application/vnd.google-apps.document',
-            'appProperties': {'local_md5': local_md5},
-        },
+        body=update_body,
         media_body=media,
         fields='id',
     ).execute()
     return 'Updated', updated['id']
-
-
-def should_skip_file(project_root: Path, file_path: Path) -> bool:
-    normalized = file_path.resolve()
-    for sensitive in SENSITIVE_FILES:
-        if normalized == (project_root / sensitive).resolve():
-            return True
-
-    # Không đồng bộ các file trong config để tránh đẩy nhầm token/credentials
-    if 'config' in file_path.parts:
-        return True
-
-    if '.venv' in file_path.parts:
-        return True
-
-    return False
 
 
 def main():
@@ -286,7 +324,8 @@ def main():
         print(f"ROOT_DIR không hợp lệ hoặc không tồn tại: {root}")
         return
 
-    print(f"Đang quét file .md trong thư mục: {root}")
+    print(f"ROOT_FOLDER_ID={folder_id}")
+    print(f"Đang quét file trong thư mục: {root}")
 
     try:
         service = authenticate(project_root)
@@ -294,16 +333,17 @@ def main():
         print(f"Lỗi xác thực OAuth2: {type(exc).__name__}")
         return
 
-    # Thu thập tất cả file .md trong root và các thư mục con, bỏ qua thư mục .git
-    md_files = [
-        p for p in root.rglob('*.md')
-        if p.is_file() and '.git' not in p.parts
+    ignore_spec = load_gitignore_spec(project_root)
+
+    all_files = [
+        p for p in root.rglob('*')
+        if p.is_file()
     ]
 
-    print(f"Tìm thấy {len(md_files)} file .md")
+    print(f"Tìm thấy {len(all_files)} file (trước khi lọc)")
 
-    if not md_files:
-        print("Không tìm thấy file .md để upload.")
+    if not all_files:
+        print("Không tìm thấy file nào để upload.")
         return
 
     folder_cache: dict[str, str] = {}
@@ -316,14 +356,23 @@ def main():
         'Error': 0,
     }
 
-    for file_path in sorted(md_files):
-        try:
-            if should_skip_file(project_root, file_path):
-                sync_results['Skipped'] += 1
-                print(f"[Skipped] {file_path}")
-                continue
+    # Lọc từ vòng quét ban đầu: chặn ngay file blacklist theo tên + quy tắc .gitignore
+    candidate_files: list[Path] = []
+    for file_path in sorted(all_files):
+        skip_reason = classify_skip_reason(project_root, file_path, ignore_spec)
+        relative_path = file_path.relative_to(root)
+        if skip_reason:
+            sync_results['Skipped'] += 1
+            print(f"[Excluded][{skip_reason}] {relative_path}")
+            continue
+        candidate_files.append(file_path)
 
+    print(f"Số file sau lọc ban đầu: {len(candidate_files)}")
+
+    for file_path in sorted(candidate_files):
+        try:
             relative_path = file_path.relative_to(root)
+
             parent_relative = relative_path.parent
             parent_folder_id = ensure_drive_folder_path(
                 service,
@@ -333,7 +382,7 @@ def main():
                 created_folders,
             )
 
-            status, file_id = sync_markdown_file(service, file_path, parent_folder_id)
+            status, file_id = sync_file(service, file_path, parent_folder_id)
             sync_results[status] += 1
             print(f"[{status}] {relative_path} -> ID: {file_id}")
         except Exception as e:

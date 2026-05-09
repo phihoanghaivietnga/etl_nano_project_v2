@@ -11,6 +11,8 @@
 - `google.oauth2.credentials`
 - `google_auth_oauthlib.flow`
 - `googleapiclient.discovery`
+- `pathspec` (đọc và áp dụng quy tắc `.gitignore`)
+- `hashlib` (tính checksum MD5 cho Smart Sync)
 
 ### Tệp cấu hình chuẩn
 - OAuth client credentials: `config/etl-nano-project-v2-oauth-credentials.json`
@@ -34,5 +36,8 @@
 - Chỉ log thông tin trạng thái xác thực ở mức cần thiết.
 
 ### Yêu cầu vận hành
-- Script phải tiếp tục quét toàn bộ file `.md` trong thư mục gốc dự án (trừ `.git`).
-- Vẫn giữ cơ chế chuyển đổi Markdown sang Google Docs trong `upload_file`.
+- Script phải quét đệ quy toàn bộ tệp trong `GDRIVE_ROOT_DIR`, sau đó lọc theo `.gitignore`.
+- Bắt buộc loại trừ cứng: `credentials.json`, `token.json`, `.git`, `.venv`, `__pycache__`.
+- Với `.md`: giữ cơ chế chuyển đổi sang Google Docs.
+- Với tệp khác (`.py`, `.sql`, `.yml`, `.yaml`, ...): upload dưới dạng tệp gốc.
+- Trước khi `update`, bắt buộc đối soát checksum MD5 và chỉ cập nhật khi sai khác.
