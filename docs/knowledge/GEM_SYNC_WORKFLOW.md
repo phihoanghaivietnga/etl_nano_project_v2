@@ -30,13 +30,19 @@
   - `KNOWLEDGE_BASE`
 - Ánh xạ này là cơ sở để tạo file Master theo ngữ cảnh chức năng.
 
-### Bước 4: Gộp nội dung
+### Bước 4: Gộp nội dung (Enhanced Merge với Metadata)
 - Tạo thư mục tạm `temp_merged/` tại root.
 - Với mỗi nhóm, tạo một file Master `.md`.
 - Cấu trúc bắt buộc của file Master:
-  - Có mục lục nguồn ở đầu file.
-  - Mỗi tệp nguồn được ghi theo header `### SOURCE: <đường dẫn tệp>`.
-  - Nội dung tệp nguồn được bọc trong code block Markdown theo loại tệp.
+  - **Mục lục nguồn ở đầu file**: Liệt kê đầy đủ tệp nguồn với metadata mô tả.
+    - Dòng đầu: `[DESCRIPTION]: <Mô tả chung của nhóm>`
+    - Mỗi tệp: `### <đường dẫn tệp> - <Mô tả chức năng thực tế của tệp>`
+  - **Gán nhãn mô tả tệp (File Description Tagging)**:
+    - Mỗi tệp nguồn phải có mô tả ngắn gọn theo ý nghĩa nghiệp vụ/vận hành thực tế.
+    - Không dùng mô tả lặp lại tên file đơn thuần.
+  - **Các khối nội dung**: Mỗi tệp nguồn được ghi theo header `### SOURCE: <đường dẫn tệp>`.
+  - **Nội dung gốc**: Bọc trong code block Markdown theo loại tệp (md, py, sql, etc.).
+- Cách thức này bảo tồn ngữ cảnh và cung cấp định hướng cho NotebookLM:
 
 ### Bước 5: Đối soát MD5
 - Tính MD5 local bằng `hashlib` cho file cần upload (bao gồm file Master).

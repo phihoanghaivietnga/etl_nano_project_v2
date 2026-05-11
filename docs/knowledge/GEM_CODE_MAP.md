@@ -28,7 +28,7 @@
 
 ### Nhóm KNOWLEDGE_BASE
 - Phạm vi:
-  - `/docs/v2_knowledge/`
+  - `/docs/knowledge/`
   - `agents.md`
   - `README.md`
   - `PROJECT_CHRONICLE.md`

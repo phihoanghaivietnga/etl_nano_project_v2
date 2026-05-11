@@ -18,7 +18,7 @@ Trước khi bắt đầu bất kỳ thay đổi nào, bạn (Master) sẽ làm 
 Bạn nạp Prompt từ Gem vào môi trường phát triển (VS Code/Cursor).
 
 * **Codex lập trình**: Thợ code sửa đổi mã nguồn Python/SQL tại các thư mục `/src/`.
-* **Codex cập nhật tri thức**: Thợ code có nhiệm vụ cập nhật các file `.md` tương ứng trong `/docs/v2_knowledge/` và ghi chép vào **PROJECT_CHRONICLE.md**.
+* **Codex cập nhật tri thức**: Thợ code có nhiệm vụ cập nhật các file `.md` tương ứng trong `/docs/knowledge/` và ghi chép vào **PROJECT_CHRONICLE.md**.
 * **Báo cáo**: Codex điền nội dung vào mục `# BÁO CÁO CỦA THỢ CODE` ngay tại tệp yêu cầu.
 
 ### Bước 3: Kiểm soát & Đồng bộ hóa (GitHub & GitHub Actions)
