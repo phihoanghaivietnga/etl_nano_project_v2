@@ -1,0 +1,9 @@
+SET NOCOUNT ON;
+
+DECLARE @TuNgay DATE = ?;
+DECLARE @DenNgay DATE = ?;
+
+SELECT
+    COUNT(1) AS RowCount
+FROM dm.DimLuotKham WITH (NOLOCK)
+WHERE CAST(NgayVaoKham AS DATE) BETWEEN @TuNgay AND @DenNgay;

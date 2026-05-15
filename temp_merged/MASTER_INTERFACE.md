@@ -8,6 +8,14 @@
 ### main.py - Thành phần giao diện, tiện ích và script vận hành hệ thống
 ### scripts/upload_to_drive.py - Thành phần giao diện, tiện ích và script vận hành hệ thống
 ### scripts/upload_to_drive_from_local.py - Thành phần giao diện, tiện ích và script vận hành hệ thống
+### src/ui/dashboard_app.py - Thành phần giao diện, tiện ích và script vận hành hệ thống
+### src/ui/main_app.py - Thành phần giao diện, tiện ích và script vận hành hệ thống
+### src/ui/pages/__init__.py - Thành phần giao diện, tiện ích và script vận hành hệ thống
+### src/ui/pages/bao_cao_page.py - Thành phần giao diện, tiện ích và script vận hành hệ thống
+### src/ui/pages/common.py - Thành phần giao diện, tiện ích và script vận hành hệ thống
+### src/ui/pages/doi_chieu_page.py - Thành phần giao diện, tiện ích và script vận hành hệ thống
+### src/ui/pages/job_history_page.py - Thành phần giao diện, tiện ích và script vận hành hệ thống
+### src/ui/pages/manual_runner_page.py - Thành phần giao diện, tiện ích và script vận hành hệ thống
 
 ## NỘI DUNG GỘP
 
@@ -679,4 +687,530 @@ def main():
 
 if __name__ == '__main__':
     main()
+```
+
+### SOURCE: src/ui/dashboard_app.py
+```py
+from __future__ import annotations
+
+import asyncio
+from datetime import date
+from pathlib import Path
+from typing import Any
+
+from src.core.base_ui import BaseUI
+
+
+class DashboardCompareBackend(BaseUI):
+    def __init__(self) -> None:
+        super().__init__(page_title="", navigation_items=[])
+        self.sql_root = Path("src/db/templates/sql/dashboard_doichieu")
+
+    @staticmethod
+    def _build_params(marker_count: int, from_date: date, to_date: date) -> tuple[Any, ...]:
+        if marker_count == 0:
+            return tuple()
+        pair = (from_date, to_date)
+        params: list[Any] = []
+        while len(params) < marker_count:
+            params.extend(pair)
+        return tuple(params[:marker_count])
+
+    @staticmethod
+    def _ensure_marker_consistency(sql_list: list[str]) -> int:
+        counts = {sql.count("?") for sql in sql_list}
+        if len(counts) != 1:
+            raise ValueError("Ba file SQL trong cùng domain phải có cùng số lượng marker '?'")
+        return counts.pop()
+
+    @staticmethod
+    def _merge_numeric(total: dict[str, float], row: dict[str, Any]) -> dict[str, float]:
+        for key, value in row.items():
+            if isinstance(value, (int, float)) and value is not None:
+                total[key] = total.get(key, 0.0) + float(value)
+        return total
+
+    async def _aggregate_production(self, production_sql: str, params: tuple[Any, ...]) -> dict[str, Any]:
+        prod_vars = self.get_production_connection_vars()
+        if not prod_vars:
+            raise ValueError("Không tìm thấy biến kết nối nào theo mẫu PROD_CONNECTION_*")
+
+        tasks = [
+            self.execute_query_async(prod_var, production_sql, params)
+            for prod_var in prod_vars
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        errors: list[str] = []
+        aggregated: dict[str, float] = {}
+        for prod_var, result in zip(prod_vars, results, strict=False):
+            if isinstance(result, Exception):
+                errors.append(f"{prod_var}: {result}")
+                continue
+            if result:
+                self._merge_numeric(aggregated, result[0])
+
+        return {"values": aggregated, "errors": errors}
+
+    async def _aggregate_staging(self, staging_sql_template: str, params: tuple[Any, ...]) -> dict[str, Any]:
+        staging_schemas = self.get_staging_schemas()
+        tasks = [
+            self.execute_query_async(
+                "DATAMART_CONNECTION_STRING",
+                staging_sql_template.format(staging_schema=schema),
+                params,
+            )
+            for schema in staging_schemas
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        errors: list[str] = []
+        aggregated: dict[str, float] = {}
+        for schema, result in zip(staging_schemas, results, strict=False):
+            if isinstance(result, Exception):
+                errors.append(f"{schema}: {result}")
+                continue
+            if result:
+                self._merge_numeric(aggregated, result[0])
+
+        return {"values": aggregated, "errors": errors}
+
+    async def compare_domain(self, domain_name: str, from_date: date, to_date: date) -> dict[str, Any]:
+        domain_path = self.sql_root / domain_name
+        production_sql = self.read_sql_template(domain_path / "production.sql")
+        staging_sql = self.read_sql_template(domain_path / "staging.sql")
+        datamart_sql = self.read_sql_template(domain_path / "datamart.sql")
+
+        marker_count = self._ensure_marker_consistency([production_sql, staging_sql, datamart_sql])
+        params = self._build_params(marker_count, from_date, to_date)
+
+        prod_task = self._aggregate_production(production_sql, params)
+        stg_task = self._aggregate_staging(staging_sql, params)
+        dm_task = self.execute_query_async("DATAMART_CONNECTION_STRING", datamart_sql, params)
+
+        prod_result, stg_result, dm_result = await asyncio.gather(
+            prod_task,
+            stg_task,
+            dm_task,
+            return_exceptions=True,
+        )
+
+        row: dict[str, Any] = {
+            "TenBang": domain_name,
+            "RowCount_Production": None,
+            "RowCount_Staging": None,
+            "RowCount_DataMart": None,
+            "TotalRevenue_Production": None,
+            "TotalRevenue_Staging": None,
+            "TotalRevenue_DataMart": None,
+            "Loi_Production": "",
+            "Loi_Staging": "",
+            "Loi_DataMart": "",
+        }
+
+        if isinstance(prod_result, Exception):
+            row["Loi_Production"] = str(prod_result)
+        else:
+            row["RowCount_Production"] = prod_result["values"].get("RowCount")
+            row["TotalRevenue_Production"] = prod_result["values"].get("TotalRevenue")
+            row["Loi_Production"] = "; ".join(prod_result["errors"])
+
+        if isinstance(stg_result, Exception):
+            row["Loi_Staging"] = str(stg_result)
+        else:
+            row["RowCount_Staging"] = stg_result["values"].get("RowCount")
+            row["TotalRevenue_Staging"] = stg_result["values"].get("TotalRevenue")
+            row["Loi_Staging"] = "; ".join(stg_result["errors"])
+
+        if isinstance(dm_result, Exception):
+            row["Loi_DataMart"] = str(dm_result)
+        elif dm_result:
+            dm_row = dm_result[0]
+            row["RowCount_DataMart"] = dm_row.get("RowCount")
+            row["TotalRevenue_DataMart"] = dm_row.get("TotalRevenue")
+
+        return row
+
+    async def compare_all(self, from_date: date, to_date: date) -> list[dict[str, Any]]:
+        domains = ["dim_luot_kham", "fact_thu_phi_dich_vu"]
+        tasks = [self.compare_domain(domain, from_date, to_date) for domain in domains]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        rows: list[dict[str, Any]] = []
+        for domain, result in zip(domains, results, strict=False):
+            if isinstance(result, Exception):
+                rows.append(
+                    {
+                        "TenBang": domain,
+                        "RowCount_Production": None,
+                        "RowCount_Staging": None,
+                        "RowCount_DataMart": None,
+                        "TotalRevenue_Production": None,
+                        "TotalRevenue_Staging": None,
+                        "TotalRevenue_DataMart": None,
+                        "Loi_Production": str(result),
+                        "Loi_Staging": "",
+                        "Loi_DataMart": "",
+                    }
+                )
+            else:
+                rows.append(result)
+        return rows
+```
+
+### SOURCE: src/ui/main_app.py
+```py
+from __future__ import annotations
+
+import os
+
+from dotenv import load_dotenv
+from nicegui import ui
+
+from src.ui.pages import register_all_pages
+
+
+load_dotenv("config/.env", override=False)
+register_all_pages()
+
+
+if __name__ in {"__main__", "__mp_main__"}:
+    ui.run(
+        title="ETL Dashboard Đối chiếu V2",
+        host=os.getenv("API_HOST", "0.0.0.0"),
+        port=int(os.getenv("API_PORT", "9001")),
+        reload=False,
+    )
+```
+
+### SOURCE: src/ui/pages/__init__.py
+```py
+from src.ui.pages.bao_cao_page import register_page as register_bao_cao_page
+from src.ui.pages.doi_chieu_page import register_page as register_doi_chieu_page
+from src.ui.pages.job_history_page import register_page as register_job_history_page
+from src.ui.pages.manual_runner_page import register_page as register_manual_runner_page
+
+
+def register_all_pages() -> None:
+    register_doi_chieu_page()
+    register_manual_runner_page()
+    register_job_history_page()
+    register_bao_cao_page()
+```
+
+### SOURCE: src/ui/pages/bao_cao_page.py
+```py
+from __future__ import annotations
+
+from nicegui import ui
+
+from src.core.base_ui import BaseUI
+from src.ui.pages.common import NAV_ITEMS
+
+
+class BaoCaoPage(BaseUI):
+    def __init__(self) -> None:
+        super().__init__(page_title="Dashboard ETL - Báo cáo", navigation_items=NAV_ITEMS)
+
+    def render(self) -> None:
+        self.build_layout(active_route="/bao-cao")
+        with ui.column().classes("w-full p-4 gap-3"):
+            ui.label("Màn hình 4 - Báo cáo").classes("text-xl font-semibold")
+            with ui.card().classes("w-full h-96 bg-white"):
+                ui.label("Khung trắng chuẩn bị tích hợp logic báo cáo từ V1").classes("text-slate-500")
+
+
+def register_page() -> None:
+    @ui.page("/bao-cao")
+    def page_bao_cao() -> None:
+        BaoCaoPage().render()
+```
+
+### SOURCE: src/ui/pages/common.py
+```py
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+NAV_ITEMS: list[tuple[str, str]] = [
+    ("/", "Đối chiếu kết quả"),
+    ("/manual-runner", "Chạy Job ETL thủ công"),
+    ("/job-history", "Lịch sử chạy Job"),
+    ("/bao-cao", "Báo cáo"),
+]
+
+
+@dataclass
+class JobHistoryRecord:
+    thoi_gian: str
+    ten_bang: str
+    tu_ngay: str
+    den_ngay: str
+    trang_thai: str
+    chi_tiet: str
+
+
+class JobHistoryStore:
+    records: list[JobHistoryRecord] = []
+
+    @classmethod
+    def add_record(cls, record: JobHistoryRecord) -> None:
+        cls.records.insert(0, record)
+```
+
+### SOURCE: src/ui/pages/doi_chieu_page.py
+```py
+from __future__ import annotations
+
+from datetime import date, datetime
+from typing import Any
+
+from nicegui import ui
+
+from src.core.base_ui import BaseUI
+from src.ui.dashboard_app import DashboardCompareBackend
+from src.ui.pages.common import NAV_ITEMS
+
+
+class DoiChieuPage(BaseUI):
+    def __init__(self) -> None:
+        super().__init__(page_title="Dashboard ETL - Đối chiếu kết quả", navigation_items=NAV_ITEMS)
+        self.from_date = date.today().replace(day=1)
+        self.to_date = date.today()
+        self.rows: list[dict[str, Any]] = []
+        self.table: ui.table | None = None
+        self.backend = DashboardCompareBackend()
+
+    @staticmethod
+    def _to_native_date(value: Any) -> date:
+        if isinstance(value, date):
+            return value
+        if isinstance(value, str):
+            if "-" in value:
+                return datetime.strptime(value, "%Y-%m-%d").date()
+            return datetime.strptime(value, "%Y%m%d").date()
+        raise ValueError(f"Không parse được ngày: {value}")
+
+    def _on_from_date_change(self, value: Any) -> None:
+        self.from_date = self._to_native_date(value)
+
+    def _on_to_date_change(self, value: Any) -> None:
+        self.to_date = self._to_native_date(value)
+
+    async def load_data(self) -> None:
+        try:
+            self.rows = await self.backend.compare_all(self.from_date, self.to_date)
+            if self.table is not None:
+                self.table.columns = [
+                    {"name": key, "label": key, "field": key, "align": "left"}
+                    for key in (self.rows[0].keys() if self.rows else [])
+                ]
+                self.table.rows = self.rows
+                self.table.update()
+            ui.notify("Đã tải dữ liệu đối chiếu", color="positive")
+        except Exception as exc:
+            ui.notify(f"Lỗi đối chiếu: {exc}", color="negative")
+
+    def render(self) -> None:
+        self.build_layout(active_route="/")
+        with ui.column().classes("w-full p-4 gap-4"):
+            ui.label("Màn hình 1 - Đối chiếu kết quả").classes("text-xl font-semibold")
+            with ui.row().classes("items-end gap-4"):
+                ui.date(value=self.from_date.isoformat(), on_change=lambda e: self._on_from_date_change(e.value)).props(
+                    "label=Từ ngày"
+                )
+                ui.date(value=self.to_date.isoformat(), on_change=lambda e: self._on_to_date_change(e.value)).props(
+                    "label=Đến ngày"
+                )
+                ui.button("Tải dữ liệu đối chiếu", on_click=self.load_data, color="primary")
+
+            self.table = ui.table(columns=[], rows=self.rows).classes("w-full")
+
+
+def register_page() -> None:
+    @ui.page("/")
+    def page_doi_chieu() -> None:
+        DoiChieuPage().render()
+```
+
+### SOURCE: src/ui/pages/job_history_page.py
+```py
+from __future__ import annotations
+
+from nicegui import ui
+
+from src.core.base_ui import BaseUI
+from src.ui.pages.common import JobHistoryStore, NAV_ITEMS
+
+
+class JobHistoryPage(BaseUI):
+    def __init__(self) -> None:
+        super().__init__(page_title="Dashboard ETL - Lịch sử chạy Job", navigation_items=NAV_ITEMS)
+
+    def render(self) -> None:
+        self.build_layout(active_route="/job-history")
+        with ui.column().classes("w-full p-4 gap-3"):
+            ui.label("Màn hình 3 - Lịch sử chạy Job").classes("text-xl font-semibold")
+            with ui.card().classes("w-full"):
+                with ui.column().classes("w-full gap-2"):
+                    if not JobHistoryStore.records:
+                        ui.label("Chưa có bản ghi lịch sử").classes("text-slate-500")
+                    else:
+                        for record in JobHistoryStore.records:
+                            status_class = "text-green-600" if record.trang_thai == "Success" else "text-red-600"
+                            with ui.row().classes("w-full justify-between border-b pb-2"):
+                                ui.label(f"{record.thoi_gian} | {record.ten_bang} | {record.tu_ngay} -> {record.den_ngay}")
+                                ui.label(record.trang_thai).classes(f"font-semibold {status_class}")
+                            ui.label(record.chi_tiet).classes("text-xs text-slate-600")
+
+
+def register_page() -> None:
+    @ui.page("/job-history")
+    def page_job_history() -> None:
+        JobHistoryPage().render()
+```
+
+### SOURCE: src/ui/pages/manual_runner_page.py
+```py
+from __future__ import annotations
+
+import asyncio
+from datetime import date, datetime
+from typing import Any
+
+from nicegui import run, ui
+
+from src.core.base_loader import GenericTableLoader
+from src.core.base_ui import BaseUI
+from src.ui.pages.common import JobHistoryRecord, JobHistoryStore, NAV_ITEMS
+
+
+TABLE_MERGE_TEMPLATE: dict[str, str] = {
+    "HoSoKhamBenhNgoaiTru": "src/db/templates/sql/fact/DimLuotKham_merge.sql",
+    "DoThiLuc": "src/db/templates/sql/fact/FactDoThiLuc_merge.sql",
+    "ThuPhiGoi": "src/db/templates/sql/fact/FactThuPhiDichVu_ThuPhiGoi_merge.sql",
+}
+
+
+class ManualRunnerPage(BaseUI):
+    def __init__(self) -> None:
+        super().__init__(page_title="Dashboard ETL - Chạy Job thủ công", navigation_items=NAV_ITEMS)
+        self.from_date = date.today().replace(day=1)
+        self.to_date = date.today()
+        self.selected_table = "HoSoKhamBenhNgoaiTru"
+        self.log_queue: asyncio.Queue[str] = asyncio.Queue()
+        self.log_panel: ui.log | None = None
+        self.run_button: ui.button | None = None
+
+    @staticmethod
+    def _to_native_date(value: Any) -> date:
+        if isinstance(value, date):
+            return value
+        if isinstance(value, str):
+            if "-" in value:
+                return datetime.strptime(value, "%Y-%m-%d").date()
+            return datetime.strptime(value, "%Y%m%d").date()
+        raise ValueError(f"Không parse được ngày: {value}")
+
+    async def _consume_log_queue(self) -> None:
+        while True:
+            message = await self.log_queue.get()
+            if self.log_panel is not None:
+                self.log_panel.push(message)
+            if message == "[DONE]":
+                break
+
+    def _on_from_date_change(self, value: Any) -> None:
+        self.from_date = self._to_native_date(value)
+
+    def _on_to_date_change(self, value: Any) -> None:
+        self.to_date = self._to_native_date(value)
+
+    async def run_job(self) -> None:
+        loop = asyncio.get_running_loop()
+        if self.run_button is not None:
+            self.run_button.disable()
+
+        connection_string = self.get_env("DATAMART_CONNECTION_STRING")
+        merge_template = TABLE_MERGE_TEMPLATE.get(self.selected_table)
+        if not connection_string:
+            ui.notify("Thiếu DATAMART_CONNECTION_STRING, chưa thể chạy job", color="negative")
+            if self.run_button is not None:
+                self.run_button.enable()
+            return
+
+        self.log_queue = asyncio.Queue()
+        consumer_task = asyncio.create_task(self._consume_log_queue())
+        from_date_native = self._to_native_date(self.from_date)
+        to_date_native = self._to_native_date(self.to_date)
+
+        loader = GenericTableLoader(
+            connection_string=connection_string,
+            table_name=self.selected_table,
+            merge_sql_path=merge_template,
+        )
+
+        try:
+            await run.io_bound(
+                loader.execute_load,
+                from_date_native,
+                to_date_native,
+                queue=self.log_queue,
+                loop=loop,
+            )
+            await consumer_task
+            JobHistoryStore.add_record(
+                JobHistoryRecord(
+                    thoi_gian=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    ten_bang=self.selected_table,
+                    tu_ngay=from_date_native.strftime("%Y%m%d"),
+                    den_ngay=to_date_native.strftime("%Y%m%d"),
+                    trang_thai="Success",
+                    chi_tiet="Job hoàn tất và commit thành công",
+                )
+            )
+            ui.notify("Run Job thành công", color="positive")
+        except Exception as exc:
+            await consumer_task
+            JobHistoryStore.add_record(
+                JobHistoryRecord(
+                    thoi_gian=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    ten_bang=self.selected_table,
+                    tu_ngay=from_date_native.strftime("%Y%m%d"),
+                    den_ngay=to_date_native.strftime("%Y%m%d"),
+                    trang_thai="Failed",
+                    chi_tiet=str(exc),
+                )
+            )
+            ui.notify(f"Run Job thất bại: {exc}", color="negative")
+        finally:
+            if self.run_button is not None:
+                self.run_button.enable()
+
+    def render(self) -> None:
+        self.build_layout(active_route="/manual-runner")
+        with ui.column().classes("w-full p-4 gap-4"):
+            ui.label("Màn hình 2 - Chạy Job ETL thủ công").classes("text-xl font-semibold")
+            with ui.row().classes("items-end gap-4"):
+                ui.select(
+                    list(TABLE_MERGE_TEMPLATE.keys()),
+                    value=self.selected_table,
+                    on_change=lambda e: setattr(self, "selected_table", e.value),
+                    label="Chọn bảng lõi",
+                )
+                ui.date(value=self.from_date.isoformat(), on_change=lambda e: self._on_from_date_change(e.value)).props(
+                    "label=Từ ngày"
+                )
+                ui.date(value=self.to_date.isoformat(), on_change=lambda e: self._on_to_date_change(e.value)).props(
+                    "label=Đến ngày"
+                )
+                self.run_button = ui.button("Run Job", on_click=self.run_job, color="primary")
+            self.log_panel = ui.log().classes("w-full h-72 bg-black text-green-400")
+
+
+def register_page() -> None:
+    @ui.page("/manual-runner")
+    def page_manual_runner() -> None:
+        ManualRunnerPage().render()
 ```

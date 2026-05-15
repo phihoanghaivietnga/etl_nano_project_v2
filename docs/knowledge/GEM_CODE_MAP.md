@@ -26,6 +26,38 @@
   - `main.py` tại root
 - File Master tương ứng: `MASTER_INTERFACE.md`
 
+#### Bổ sung theo yêu cầu 20260514_1420_tao_man_hinh_dashboard_doi_chieu_v1
+- File UI mới:
+  - `src/ui/dashboard_app.py`
+- File lõi dùng chung phục vụ UI Manual Runner:
+  - `src/core/base_ui.py`
+  - `src/core/base_loader.py`
+- SQL template đối chiếu dùng cho màn hình giao diện:
+  - `src/db/templates/sql/dashboard_doichieu/ho_so_kham_benh_ngoai_tru_doi_chieu.sql`
+
+#### Bổ sung theo yêu cầu 20260515_0835_tao_man_hinh_dashboard_doi_chieu_v2
+- Entry UI mới theo mô hình phân trang:
+  - `src/ui/main_app.py`
+- Trang giao diện tách file độc lập:
+  - `src/ui/pages/__init__.py`
+  - `src/ui/pages/common.py`
+  - `src/ui/pages/doi_chieu_page.py`
+  - `src/ui/pages/manual_runner_page.py`
+  - `src/ui/pages/job_history_page.py`
+  - `src/ui/pages/bao_cao_page.py`
+- Backend đối chiếu bất đồng bộ:
+  - `src/ui/dashboard_app.py`
+- Base class lõi dùng chung cho UI và Loader:
+  - `src/core/base_ui.py`
+  - `src/core/base_loader.py`
+- SQL template đối chiếu theo domain:
+  - `src/db/templates/sql/dashboard_doichieu/dim_luot_kham/production.sql`
+  - `src/db/templates/sql/dashboard_doichieu/dim_luot_kham/staging.sql`
+  - `src/db/templates/sql/dashboard_doichieu/dim_luot_kham/datamart.sql`
+  - `src/db/templates/sql/dashboard_doichieu/fact_thu_phi_dich_vu/production.sql`
+  - `src/db/templates/sql/dashboard_doichieu/fact_thu_phi_dich_vu/staging.sql`
+  - `src/db/templates/sql/dashboard_doichieu/fact_thu_phi_dich_vu/datamart.sql`
+
 ### Nhóm KNOWLEDGE_BASE
 - Phạm vi:
   - `/docs/knowledge/`
