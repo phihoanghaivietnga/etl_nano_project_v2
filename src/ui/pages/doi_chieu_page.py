@@ -50,7 +50,7 @@ class DoiChieuPage(BaseUI):
             ui.notify(f"Lỗi đối chiếu: {exc}", color="negative")
 
     def render(self) -> None:
-        self.build_layout(active_route="/")
+        self.build_layout(active_route="/doi-chieu")
         with ui.column().classes("w-full p-4 gap-4"):
             ui.label("Màn hình 1 - Đối chiếu kết quả").classes("text-xl font-semibold")
             with ui.row().classes("items-end gap-4"):
@@ -65,7 +65,7 @@ class DoiChieuPage(BaseUI):
             self.table = ui.table(columns=[], rows=self.rows).classes("w-full")
 
 
-def register_page() -> None:
-    @ui.page("/")
-    def page_doi_chieu() -> None:
-        DoiChieuPage().render()
+@ui.page("/doi-chieu")
+def doi_chieu_route() -> None:
+    page = DoiChieuPage()
+    page.render()

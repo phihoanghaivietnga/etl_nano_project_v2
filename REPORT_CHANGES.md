@@ -172,3 +172,74 @@
 
 ### 7) Cập nhật tri thức
 - Đã đăng ký toàn bộ file UI/Base Class/SQL template mới vào nhóm `INTERFACE` trong `GEM_CODE_MAP.md`.
+
+## Phạm vi cập nhật theo yêu cầu 20260515_1315_tao_man_hinh_dashboard_doi_chieu_v3
+- Cập nhật `src/ui/main_app.py`
+- Cập nhật `src/ui/pages/common.py`
+- Cập nhật `src/ui/pages/doi_chieu_page.py`
+- Cập nhật `src/ui/pages/manual_runner_page.py`
+- Cập nhật `src/ui/pages/job_history_page.py`
+- Cập nhật `src/ui/pages/bao_cao_page.py`
+- Cập nhật `src/ui/pages/__init__.py`
+- Cập nhật `docs/prompts/20260515_1315_tao_man_hinh_dashboard_doi_chieu_v3.md`
+
+## Nội dung đã thực hiện
+
+### 1) Ghi nhận lỗi gốc UI tàng hình
+- Khi chạy `uv run python -m src.ui.main_app`, root trả JSON API thay vì giao diện.
+- Nguyên nhân chính:
+  - Route trang đối chiếu chưa được cố định theo URL chuyên biệt `/doi-chieu`.
+  - Cơ chế route đặt trong hàm đăng ký khiến việc nạp route không tường minh ở entry point.
+  - Thiếu route gốc điều hướng từ `/` sang trang giao diện.
+
+### 2) Khắc phục tại entry point `src/ui/main_app.py`
+- Import tường minh các module pages để decorators `@ui.page` được nạp ngay khi khởi chạy.
+- Tạo route gốc:
+  - `@ui.page("/")`
+  - `ui.navigate.to("/doi-chieu")`
+- Giữ chuẩn block chạy cuối file với `if __name__ in {"__main__", "__mp_main__"}:` và `ui.run(...)`.
+
+### 3) Chuẩn hóa định tuyến pages theo tiêu chuẩn an toàn scope
+- Áp dụng wrapper function module-level cho từng route, mỗi request khởi tạo object mới:
+  - `@ui.page('/doi-chieu')` -> tạo mới `DoiChieuPage()` trong hàm route.
+  - `@ui.page('/manual-runner')` -> tạo mới `ManualRunnerPage()`.
+  - `@ui.page('/job-history')` -> tạo mới `JobHistoryPage()`.
+  - `@ui.page('/bao-cao')` -> tạo mới `BaoCaoPage()`.
+- Không dùng instance toàn cục, tránh State Leakage giữa các client/tab.
+
+### 4) Đồng bộ điều hướng nội bộ
+- Cập nhật menu trong `src/ui/pages/common.py`:
+  - Đổi route đối chiếu từ `/` sang `/doi-chieu`.
+- Cập nhật `active_route` tương ứng trong `DoiChieuPage`.
+
+### 5) Cập nhật mô-đun pages
+- `src/ui/pages/__init__.py` chuyển sang import module-level để nạp route decorators tự động.
+- Loại bỏ phụ thuộc vào hàm đăng ký route thủ công.
+
+## Phạm vi cập nhật theo yêu cầu 20260515_1340_tao_man_hinh_dashboard_doi_chieu_v4
+- Cập nhật `src/ui/main_app.py`
+- Cập nhật `config/.env`
+- Cập nhật `docs/prompts/20260515_1340_tao_man_hinh_dashboard_doi_chieu_v4.md`
+
+## Nội dung đã thực hiện
+
+### 1) Khóa xung đột route giữa API và UI
+- Rà soát toàn bộ mã nguồn không còn định nghĩa `@app.get('/')`.
+- Bổ sung endpoint API riêng tại `@app.get('/api/health')` trong `src/ui/main_app.py` để tách biệt hoàn toàn khỏi route giao diện.
+- Giữ route UI gốc `@ui.page('/')` và điều hướng về `/doi-chieu`.
+
+### 2) Chuẩn hóa nạp biến môi trường trước khi đọc port
+- `src/ui/main_app.py` đã nạp `.env` bằng:
+  - `from dotenv import load_dotenv`
+  - `load_dotenv('config/.env', override=False)`
+- Chỉ sau đó mới đọc biến môi trường để chạy UI.
+
+### 3) Đổi sang cấu hình port động UI
+- `ui.run()` chuyển sang dùng `UI_PORT` với fallback cứng theo yêu cầu:
+  - `port=int(os.getenv('UI_PORT', '9005'))`
+- Đã thêm biến cấu hình trong `config/.env`:
+  - `UI_PORT=9005`
+
+### 4) Đảm bảo an toàn scope trang UI
+- Các trang trong `src/ui/pages/` giữ mô hình wrapper function với `@ui.page(...)`.
+- Mỗi request đều khởi tạo instance class mới trong wrapper, không dùng instance toàn cục.

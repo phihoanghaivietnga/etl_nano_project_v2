@@ -134,7 +134,7 @@ class ManualRunnerPage(BaseUI):
             self.log_panel = ui.log().classes("w-full h-72 bg-black text-green-400")
 
 
-def register_page() -> None:
-    @ui.page("/manual-runner")
-    def page_manual_runner() -> None:
-        ManualRunnerPage().render()
+@ui.page("/manual-runner")
+def manual_runner_route() -> None:
+    page = ManualRunnerPage()
+    page.render()

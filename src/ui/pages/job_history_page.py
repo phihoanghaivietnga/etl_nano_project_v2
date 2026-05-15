@@ -27,7 +27,7 @@ class JobHistoryPage(BaseUI):
                             ui.label(record.chi_tiet).classes("text-xs text-slate-600")
 
 
-def register_page() -> None:
-    @ui.page("/job-history")
-    def page_job_history() -> None:
-        JobHistoryPage().render()
+@ui.page("/job-history")
+def job_history_route() -> None:
+    page = JobHistoryPage()
+    page.render()

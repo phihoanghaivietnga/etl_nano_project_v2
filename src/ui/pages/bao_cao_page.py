@@ -18,7 +18,7 @@ class BaoCaoPage(BaseUI):
                 ui.label("Khung trắng chuẩn bị tích hợp logic báo cáo từ V1").classes("text-slate-500")
 
 
-def register_page() -> None:
-    @ui.page("/bao-cao")
-    def page_bao_cao() -> None:
-        BaoCaoPage().render()
+@ui.page("/bao-cao")
+def bao_cao_route() -> None:
+    page = BaoCaoPage()
+    page.render()

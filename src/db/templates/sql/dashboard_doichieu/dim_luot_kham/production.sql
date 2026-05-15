@@ -3,7 +3,6 @@ SET NOCOUNT ON;
 DECLARE @TuNgay DATE = ?;
 DECLARE @DenNgay DATE = ?;
 
-SELECT
-    COUNT(1) AS RowCount
+SELECT COUNT(1) AS [RowCount]
 FROM dbo.HoSoKhamBenhNgoaiTru WITH (NOLOCK)
-WHERE CAST(NgayVaoKham AS DATE) BETWEEN @TuNgay AND @DenNgay;
+WHERE NgayVaoKham >= @TuNgay AND NgayVaoKham < DATEADD(DAY, 1, @DenNgay);

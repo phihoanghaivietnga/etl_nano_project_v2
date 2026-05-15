@@ -1,0 +1,4 @@
+SET NOCOUNT ON;
+
+SELECT COUNT(1) AS [RowCount]
+FROM dm.DimBenhNhan WITH (NOLOCK);

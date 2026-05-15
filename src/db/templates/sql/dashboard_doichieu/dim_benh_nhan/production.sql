@@ -1,0 +1,5 @@
+SET NOCOUNT ON;
+
+
+SELECT COUNT(1) AS [RowCount]
+FROM dbo.DMBenhNhan WITH (NOLOCK);

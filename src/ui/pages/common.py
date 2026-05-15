@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 
 NAV_ITEMS: list[tuple[str, str]] = [
-    ("/", "Đối chiếu kết quả"),
+    ("/doi-chieu", "Đối chiếu kết quả"),
     ("/manual-runner", "Chạy Job ETL thủ công"),
     ("/job-history", "Lịch sử chạy Job"),
     ("/bao-cao", "Báo cáo"),
