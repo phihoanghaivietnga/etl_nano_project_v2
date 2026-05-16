@@ -4,4 +4,5 @@ DECLARE @TuNgay DATE = ?;
 DECLARE @DenNgay DATE = ?;
 
 SELECT COUNT(1) AS [RowCount]
-FROM {staging_schema}.DMBenhNhan WITH (NOLOCK);
+FROM dm.DimDichVu WITH (NOLOCK)
+WHERE NguonDuLieuKey = 2;

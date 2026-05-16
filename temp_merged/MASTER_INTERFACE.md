@@ -694,14 +694,36 @@ if __name__ == '__main__':
 from __future__ import annotations
 
 import asyncio
+from decimal import Decimal
 from datetime import date
 from pathlib import Path
+import traceback
 from typing import Any
 
 from src.core.base_ui import BaseUI
 
 
 class DashboardCompareBackend(BaseUI):
+    ORDERED_DOMAINS = [
+        "dim_benh_nhan",
+        "dim_benh",
+        "dim_dich_vu",
+        "dim_loai_goi_dich_vu",
+        "dim_luot_kham",
+        "fact_thu_phi_dich_vu",
+    ]
+
+    DOMAIN_TITLES = {
+        "dim_benh_nhan": "BẢNG ĐỐI CHIẾU BỆNH NHÂN",
+        "dim_benh": "BẢNG ĐỐI CHIẾU BỆNH",
+        "dim_dich_vu": "BẢNG ĐỐI CHIẾU DỊCH VỤ",
+        "dim_loai_goi_dich_vu": "BẢNG ĐỐI CHIẾU LOẠI GÓI DỊCH VỤ",
+        "dim_luot_kham": "BẢNG ĐỐI CHIẾU LƯỢT KHÁM",
+        "fact_thu_phi_dich_vu": "BẢNG ĐỐI CHIẾU DOANH THU",
+    }
+
+    FACT_REQUIRED_METRICS = ["RowCount", "TongTien", "TongTienSauTangGiam"]
+
     def __init__(self) -> None:
         super().__init__(page_title="", navigation_items=[])
         self.sql_root = Path("src/db/templates/sql/dashboard_doichieu")
@@ -726,9 +748,59 @@ class DashboardCompareBackend(BaseUI):
     @staticmethod
     def _merge_numeric(total: dict[str, float], row: dict[str, Any]) -> dict[str, float]:
         for key, value in row.items():
-            if isinstance(value, (int, float)) and value is not None:
+            if value is None:
+                total[key] = total.get(key, 0.0)
+                continue
+            if isinstance(value, (int, float, Decimal)):
                 total[key] = total.get(key, 0.0) + float(value)
         return total
+
+    @staticmethod
+    def _normalize_metric_map(values: dict[str, Any]) -> dict[str, float]:
+        normalized: dict[str, float] = {}
+        for key, value in values.items():
+            if value is None:
+                normalized[key] = 0.0
+            elif isinstance(value, (int, float, Decimal)):
+                normalized[key] = float(value)
+        return normalized
+
+    @classmethod
+    def _resolve_metrics(cls, domain_name: str, source_maps: list[dict[str, float]]) -> list[str]:
+        metrics: list[str] = []
+        for source_map in source_maps:
+            for key in source_map:
+                if key not in metrics:
+                    metrics.append(key)
+
+        if domain_name == "fact_thu_phi_dich_vu":
+            for metric in cls.FACT_REQUIRED_METRICS:
+                if metric not in metrics:
+                    metrics.append(metric)
+        else:
+            metrics = ["RowCount"]
+
+        return metrics
+
+    @staticmethod
+    def _build_rows_by_source(
+        metrics: list[str],
+        production_values: dict[str, float],
+        staging_values: dict[str, float],
+        datamart_values: dict[str, float],
+    ) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        source_items = [
+            ("Production", production_values),
+            ("Staging", staging_values),
+            ("DataMart", datamart_values),
+        ]
+        for source_name, source_values in source_items:
+            row: dict[str, Any] = {"Nguon": source_name}
+            for metric in metrics:
+                row[metric] = source_values.get(metric, 0.0)
+            rows.append(row)
+        return rows
 
     async def _aggregate_production(self, production_sql: str, params: tuple[Any, ...]) -> dict[str, Any]:
         prod_vars = self.get_production_connection_vars()
@@ -745,6 +817,10 @@ class DashboardCompareBackend(BaseUI):
         aggregated: dict[str, float] = {}
         for prod_var, result in zip(prod_vars, results, strict=False):
             if isinstance(result, Exception):
+                try:
+                    raise result
+                except Exception:
+                    traceback.print_exc()
                 errors.append(f"{prod_var}: {result}")
                 continue
             if result:
@@ -768,6 +844,10 @@ class DashboardCompareBackend(BaseUI):
         aggregated: dict[str, float] = {}
         for schema, result in zip(staging_schemas, results, strict=False):
             if isinstance(result, Exception):
+                try:
+                    raise result
+                except Exception:
+                    traceback.print_exc()
                 errors.append(f"{schema}: {result}")
                 continue
             if result:
@@ -795,62 +875,79 @@ class DashboardCompareBackend(BaseUI):
             return_exceptions=True,
         )
 
-        row: dict[str, Any] = {
-            "TenBang": domain_name,
-            "RowCount_Production": None,
-            "RowCount_Staging": None,
-            "RowCount_DataMart": None,
-            "TotalRevenue_Production": None,
-            "TotalRevenue_Staging": None,
-            "TotalRevenue_DataMart": None,
-            "Loi_Production": "",
-            "Loi_Staging": "",
-            "Loi_DataMart": "",
-        }
+        production_values: dict[str, float] = {}
+        staging_values: dict[str, float] = {}
+        datamart_values: dict[str, float] = {}
+        errors: dict[str, str] = {"Production": "", "Staging": "", "DataMart": ""}
 
         if isinstance(prod_result, Exception):
-            row["Loi_Production"] = str(prod_result)
+            try:
+                raise prod_result
+            except Exception:
+                traceback.print_exc()
+            errors["Production"] = str(prod_result)
         else:
-            row["RowCount_Production"] = prod_result["values"].get("RowCount")
-            row["TotalRevenue_Production"] = prod_result["values"].get("TotalRevenue")
-            row["Loi_Production"] = "; ".join(prod_result["errors"])
+            production_values = self._normalize_metric_map(prod_result.get("values", {}))
+            errors["Production"] = "; ".join(prod_result.get("errors", []))
 
         if isinstance(stg_result, Exception):
-            row["Loi_Staging"] = str(stg_result)
+            try:
+                raise stg_result
+            except Exception:
+                traceback.print_exc()
+            errors["Staging"] = str(stg_result)
         else:
-            row["RowCount_Staging"] = stg_result["values"].get("RowCount")
-            row["TotalRevenue_Staging"] = stg_result["values"].get("TotalRevenue")
-            row["Loi_Staging"] = "; ".join(stg_result["errors"])
+            staging_values = self._normalize_metric_map(stg_result.get("values", {}))
+            errors["Staging"] = "; ".join(stg_result.get("errors", []))
 
         if isinstance(dm_result, Exception):
-            row["Loi_DataMart"] = str(dm_result)
-        elif dm_result:
-            dm_row = dm_result[0]
-            row["RowCount_DataMart"] = dm_row.get("RowCount")
-            row["TotalRevenue_DataMart"] = dm_row.get("TotalRevenue")
+            try:
+                raise dm_result
+            except Exception:
+                traceback.print_exc()
+            errors["DataMart"] = str(dm_result)
+        else:
+            dm_data = dm_result[0] if dm_result else {}
+            datamart_values = self._normalize_metric_map(dm_data)
 
-        return row
+        metrics = self._resolve_metrics(
+            domain_name,
+            [production_values, staging_values, datamart_values],
+        )
+        rows = self._build_rows_by_source(metrics, production_values, staging_values, datamart_values)
+        columns = ["Nguon", *metrics]
+
+        return {
+            "domain": domain_name,
+            "title": self.DOMAIN_TITLES.get(domain_name, domain_name.upper()),
+            "columns": columns,
+            "rows": rows,
+            "errors": errors,
+        }
 
     async def compare_all(self, from_date: date, to_date: date) -> list[dict[str, Any]]:
-        domains = ["dim_luot_kham", "fact_thu_phi_dich_vu"]
+        domains = self.ORDERED_DOMAINS
         tasks = [self.compare_domain(domain, from_date, to_date) for domain in domains]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         rows: list[dict[str, Any]] = []
         for domain, result in zip(domains, results, strict=False):
             if isinstance(result, Exception):
+                try:
+                    raise result
+                except Exception:
+                    traceback.print_exc()
                 rows.append(
                     {
-                        "TenBang": domain,
-                        "RowCount_Production": None,
-                        "RowCount_Staging": None,
-                        "RowCount_DataMart": None,
-                        "TotalRevenue_Production": None,
-                        "TotalRevenue_Staging": None,
-                        "TotalRevenue_DataMart": None,
-                        "Loi_Production": str(result),
-                        "Loi_Staging": "",
-                        "Loi_DataMart": "",
+                        "domain": domain,
+                        "title": self.DOMAIN_TITLES.get(domain, domain.upper()),
+                        "columns": ["Nguon", "RowCount"],
+                        "rows": [
+                            {"Nguon": "Production", "RowCount": 0.0},
+                            {"Nguon": "Staging", "RowCount": 0.0},
+                            {"Nguon": "DataMart", "RowCount": 0.0},
+                        ],
+                        "errors": {"Production": str(result), "Staging": "", "DataMart": ""},
                     }
                 )
             else:
@@ -865,37 +962,56 @@ from __future__ import annotations
 import os
 
 from dotenv import load_dotenv
-from nicegui import ui
+from nicegui import app, ui
 
-from src.ui.pages import register_all_pages
+from src.ui.pages import bao_cao_page, doi_chieu_page, job_history_page, manual_runner_page
 
 
 load_dotenv("config/.env", override=False)
-register_all_pages()
+
+
+def resolve_ui_port() -> int:
+    raw_port = os.getenv("UI_PORT", "9005")
+    try:
+        port = int(raw_port)
+        return port if port > 0 else 9005
+    except (TypeError, ValueError):
+        return 9005
+
+
+@app.get("/api/health")
+def api_health() -> dict[str, str]:
+    return {
+        "name": "ETL Nano V2 API",
+        "version": "1.0.0",
+        "status": "running",
+    }
+
+
+@ui.page("/")
+def index_page() -> None:
+    ui.navigate.to("/doi-chieu")
 
 
 if __name__ in {"__main__", "__mp_main__"}:
     ui.run(
         title="ETL Dashboard Đối chiếu V2",
         host=os.getenv("API_HOST", "0.0.0.0"),
-        port=int(os.getenv("API_PORT", "9001")),
+        port=resolve_ui_port(),
         reload=False,
     )
 ```
 
 ### SOURCE: src/ui/pages/__init__.py
 ```py
-from src.ui.pages.bao_cao_page import register_page as register_bao_cao_page
-from src.ui.pages.doi_chieu_page import register_page as register_doi_chieu_page
-from src.ui.pages.job_history_page import register_page as register_job_history_page
-from src.ui.pages.manual_runner_page import register_page as register_manual_runner_page
+from src.ui.pages import bao_cao_page, doi_chieu_page, job_history_page, manual_runner_page
 
-
-def register_all_pages() -> None:
-    register_doi_chieu_page()
-    register_manual_runner_page()
-    register_job_history_page()
-    register_bao_cao_page()
+__all__ = [
+    "bao_cao_page",
+    "doi_chieu_page",
+    "job_history_page",
+    "manual_runner_page",
+]
 ```
 
 ### SOURCE: src/ui/pages/bao_cao_page.py
@@ -920,10 +1036,10 @@ class BaoCaoPage(BaseUI):
                 ui.label("Khung trắng chuẩn bị tích hợp logic báo cáo từ V1").classes("text-slate-500")
 
 
-def register_page() -> None:
-    @ui.page("/bao-cao")
-    def page_bao_cao() -> None:
-        BaoCaoPage().render()
+@ui.page("/bao-cao")
+def bao_cao_route() -> None:
+    page = BaoCaoPage()
+    page.render()
 ```
 
 ### SOURCE: src/ui/pages/common.py
@@ -934,7 +1050,7 @@ from dataclasses import dataclass
 
 
 NAV_ITEMS: list[tuple[str, str]] = [
-    ("/", "Đối chiếu kết quả"),
+    ("/doi-chieu", "Đối chiếu kết quả"),
     ("/manual-runner", "Chạy Job ETL thủ công"),
     ("/job-history", "Lịch sử chạy Job"),
     ("/bao-cao", "Báo cáo"),
@@ -978,8 +1094,7 @@ class DoiChieuPage(BaseUI):
         super().__init__(page_title="Dashboard ETL - Đối chiếu kết quả", navigation_items=NAV_ITEMS)
         self.from_date = date.today().replace(day=1)
         self.to_date = date.today()
-        self.rows: list[dict[str, Any]] = []
-        self.table: ui.table | None = None
+        self.result_container: ui.column | None = None
         self.backend = DashboardCompareBackend()
 
     @staticmethod
@@ -998,22 +1113,41 @@ class DoiChieuPage(BaseUI):
     def _on_to_date_change(self, value: Any) -> None:
         self.to_date = self._to_native_date(value)
 
-    async def load_data(self) -> None:
+    @staticmethod
+    def _build_table_columns(keys: list[str]) -> list[dict[str, Any]]:
+        return [{"name": key, "label": key, "field": key, "align": "left"} for key in keys]
+
+    def _render_domain_card(self, domain_result: dict[str, Any]) -> None:
+        if self.result_container is None:
+            return
+        with self.result_container:
+            with ui.card().classes("w-full"):
+                ui.label(domain_result.get("title", "BẢNG ĐỐI CHIẾU")).classes("text-base font-semibold")
+                table_columns = self._build_table_columns(domain_result.get("columns", []))
+                table_rows = domain_result.get("rows", [])
+                ui.table(columns=table_columns, rows=table_rows).classes("w-full")
+
+                errors = domain_result.get("errors", {})
+                for source in ["Production", "Staging", "DataMart"]:
+                    error_text = (errors.get(source, "") or "").strip()
+                    if error_text:
+                        ui.label(f"{source}: {error_text}").classes("text-red-600 text-sm")
+
+    async def run_compare_all(self) -> None:
         try:
-            self.rows = await self.backend.compare_all(self.from_date, self.to_date)
-            if self.table is not None:
-                self.table.columns = [
-                    {"name": key, "label": key, "field": key, "align": "left"}
-                    for key in (self.rows[0].keys() if self.rows else [])
-                ]
-                self.table.rows = self.rows
-                self.table.update()
-            ui.notify("Đã tải dữ liệu đối chiếu", color="positive")
+            if self.result_container is not None:
+                self.result_container.clear()
+
+            results = await self.backend.compare_all(self.from_date, self.to_date)
+            for domain_result in results:
+                self._render_domain_card(domain_result)
+
+            ui.notify("Đã chạy đối chiếu toàn bộ", color="positive")
         except Exception as exc:
             ui.notify(f"Lỗi đối chiếu: {exc}", color="negative")
 
     def render(self) -> None:
-        self.build_layout(active_route="/")
+        self.build_layout(active_route="/doi-chieu")
         with ui.column().classes("w-full p-4 gap-4"):
             ui.label("Màn hình 1 - Đối chiếu kết quả").classes("text-xl font-semibold")
             with ui.row().classes("items-end gap-4"):
@@ -1023,15 +1157,16 @@ class DoiChieuPage(BaseUI):
                 ui.date(value=self.to_date.isoformat(), on_change=lambda e: self._on_to_date_change(e.value)).props(
                     "label=Đến ngày"
                 )
-                ui.button("Tải dữ liệu đối chiếu", on_click=self.load_data, color="primary")
+                ui.button("Chạy đối chiếu toàn bộ", on_click=self.run_compare_all, color="primary")
 
-            self.table = ui.table(columns=[], rows=self.rows).classes("w-full")
+            with ui.scroll_area().classes("w-full h-[70vh]"):
+                self.result_container = ui.column().classes("w-full gap-4")
 
 
-def register_page() -> None:
-    @ui.page("/")
-    def page_doi_chieu() -> None:
-        DoiChieuPage().render()
+@ui.page("/doi-chieu")
+def doi_chieu_route() -> None:
+    page = DoiChieuPage()
+    page.render()
 ```
 
 ### SOURCE: src/ui/pages/job_history_page.py
@@ -1065,10 +1200,10 @@ class JobHistoryPage(BaseUI):
                             ui.label(record.chi_tiet).classes("text-xs text-slate-600")
 
 
-def register_page() -> None:
-    @ui.page("/job-history")
-    def page_job_history() -> None:
-        JobHistoryPage().render()
+@ui.page("/job-history")
+def job_history_route() -> None:
+    page = JobHistoryPage()
+    page.render()
 ```
 
 ### SOURCE: src/ui/pages/manual_runner_page.py
@@ -1209,8 +1344,8 @@ class ManualRunnerPage(BaseUI):
             self.log_panel = ui.log().classes("w-full h-72 bg-black text-green-400")
 
 
-def register_page() -> None:
-    @ui.page("/manual-runner")
-    def page_manual_runner() -> None:
-        ManualRunnerPage().render()
+@ui.page("/manual-runner")
+def manual_runner_route() -> None:
+    page = ManualRunnerPage()
+    page.render()
 ```

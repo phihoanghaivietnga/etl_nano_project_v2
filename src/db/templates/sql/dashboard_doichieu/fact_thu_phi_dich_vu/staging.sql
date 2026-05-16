@@ -21,9 +21,9 @@ FROM
 				FROM {staging_schema}.ThuPhiTangGiam
 				WHERE DaDongTien = 1
 				  AND CAST(NgayDenKham AS DATE) >= @TuNgay
-				  AND CAST(NgayDenKham AS DATE) <= DATEADD(DAY, 1, @DenNgay)
+				  AND CAST(NgayDenKham AS DATE) < DATEADD(DAY, 1, @DenNgay)
 				GROUP BY MaHoSo, MaChiTieu, MaPhieuDichVu) b on a.MaHoSo = b.MaHoSo and a.MaChiTieu = b.MaChiTieu and a.MaPhieuDichVu = b.MaPhieuDichVu
-	where a.NgayDenKham >= @TuNgay and a.ngaydenkham < @DenNgay
+	where a.NgayDenKham >= @TuNgay and a.ngaydenkham < DATEADD(DAY, 1, @DenNgay)
 		and a.DaDongTien = 1
 	group by cast(a.ngaydenkham as date)
 	UNION

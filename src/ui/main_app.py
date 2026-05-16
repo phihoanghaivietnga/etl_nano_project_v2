@@ -11,6 +11,15 @@ from src.ui.pages import bao_cao_page, doi_chieu_page, job_history_page, manual_
 load_dotenv("config/.env", override=False)
 
 
+def resolve_ui_port() -> int:
+    raw_port = os.getenv("UI_PORT", "9005")
+    try:
+        port = int(raw_port)
+        return port if port > 0 else 9005
+    except (TypeError, ValueError):
+        return 9005
+
+
 @app.get("/api/health")
 def api_health() -> dict[str, str]:
     return {
@@ -29,6 +38,6 @@ if __name__ in {"__main__", "__mp_main__"}:
     ui.run(
         title="ETL Dashboard Đối chiếu V2",
         host=os.getenv("API_HOST", "0.0.0.0"),
-        port=int(os.getenv("UI_PORT", "9005")),
+        port=resolve_ui_port(),
         reload=False,
     )

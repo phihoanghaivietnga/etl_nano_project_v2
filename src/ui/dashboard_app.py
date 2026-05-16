@@ -1,14 +1,36 @@
 from __future__ import annotations
 
 import asyncio
+from decimal import Decimal
 from datetime import date
 from pathlib import Path
+import traceback
 from typing import Any
 
 from src.core.base_ui import BaseUI
 
 
 class DashboardCompareBackend(BaseUI):
+    ORDERED_DOMAINS = [
+        "dim_benh_nhan",
+        "dim_benh",
+        "dim_dich_vu",
+        "dim_loai_goi_dich_vu",
+        "dim_luot_kham",
+        "fact_thu_phi_dich_vu",
+    ]
+
+    DOMAIN_TITLES = {
+        "dim_benh_nhan": "BẢNG ĐỐI CHIẾU BỆNH NHÂN",
+        "dim_benh": "BẢNG ĐỐI CHIẾU BỆNH",
+        "dim_dich_vu": "BẢNG ĐỐI CHIẾU DỊCH VỤ",
+        "dim_loai_goi_dich_vu": "BẢNG ĐỐI CHIẾU LOẠI GÓI DỊCH VỤ",
+        "dim_luot_kham": "BẢNG ĐỐI CHIẾU LƯỢT KHÁM",
+        "fact_thu_phi_dich_vu": "BẢNG ĐỐI CHIẾU DOANH THU",
+    }
+
+    FACT_REQUIRED_METRICS = ["RowCount", "TongTien", "TongTienSauTangGiam"]
+
     def __init__(self) -> None:
         super().__init__(page_title="", navigation_items=[])
         self.sql_root = Path("src/db/templates/sql/dashboard_doichieu")
@@ -33,9 +55,59 @@ class DashboardCompareBackend(BaseUI):
     @staticmethod
     def _merge_numeric(total: dict[str, float], row: dict[str, Any]) -> dict[str, float]:
         for key, value in row.items():
-            if isinstance(value, (int, float)) and value is not None:
+            if value is None:
+                total[key] = total.get(key, 0.0)
+                continue
+            if isinstance(value, (int, float, Decimal)):
                 total[key] = total.get(key, 0.0) + float(value)
         return total
+
+    @staticmethod
+    def _normalize_metric_map(values: dict[str, Any]) -> dict[str, float]:
+        normalized: dict[str, float] = {}
+        for key, value in values.items():
+            if value is None:
+                normalized[key] = 0.0
+            elif isinstance(value, (int, float, Decimal)):
+                normalized[key] = float(value)
+        return normalized
+
+    @classmethod
+    def _resolve_metrics(cls, domain_name: str, source_maps: list[dict[str, float]]) -> list[str]:
+        metrics: list[str] = []
+        for source_map in source_maps:
+            for key in source_map:
+                if key not in metrics:
+                    metrics.append(key)
+
+        if domain_name == "fact_thu_phi_dich_vu":
+            for metric in cls.FACT_REQUIRED_METRICS:
+                if metric not in metrics:
+                    metrics.append(metric)
+        else:
+            metrics = ["RowCount"]
+
+        return metrics
+
+    @staticmethod
+    def _build_rows_by_source(
+        metrics: list[str],
+        production_values: dict[str, float],
+        staging_values: dict[str, float],
+        datamart_values: dict[str, float],
+    ) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        source_items = [
+            ("Production", production_values),
+            ("Staging", staging_values),
+            ("DataMart", datamart_values),
+        ]
+        for source_name, source_values in source_items:
+            row: dict[str, Any] = {"Nguon": source_name}
+            for metric in metrics:
+                row[metric] = source_values.get(metric, 0.0)
+            rows.append(row)
+        return rows
 
     async def _aggregate_production(self, production_sql: str, params: tuple[Any, ...]) -> dict[str, Any]:
         prod_vars = self.get_production_connection_vars()
@@ -52,6 +124,10 @@ class DashboardCompareBackend(BaseUI):
         aggregated: dict[str, float] = {}
         for prod_var, result in zip(prod_vars, results, strict=False):
             if isinstance(result, Exception):
+                try:
+                    raise result
+                except Exception:
+                    traceback.print_exc()
                 errors.append(f"{prod_var}: {result}")
                 continue
             if result:
@@ -75,6 +151,10 @@ class DashboardCompareBackend(BaseUI):
         aggregated: dict[str, float] = {}
         for schema, result in zip(staging_schemas, results, strict=False):
             if isinstance(result, Exception):
+                try:
+                    raise result
+                except Exception:
+                    traceback.print_exc()
                 errors.append(f"{schema}: {result}")
                 continue
             if result:
@@ -102,62 +182,79 @@ class DashboardCompareBackend(BaseUI):
             return_exceptions=True,
         )
 
-        row: dict[str, Any] = {
-            "TenBang": domain_name,
-            "RowCount_Production": None,
-            "RowCount_Staging": None,
-            "RowCount_DataMart": None,
-            "TotalRevenue_Production": None,
-            "TotalRevenue_Staging": None,
-            "TotalRevenue_DataMart": None,
-            "Loi_Production": "",
-            "Loi_Staging": "",
-            "Loi_DataMart": "",
-        }
+        production_values: dict[str, float] = {}
+        staging_values: dict[str, float] = {}
+        datamart_values: dict[str, float] = {}
+        errors: dict[str, str] = {"Production": "", "Staging": "", "DataMart": ""}
 
         if isinstance(prod_result, Exception):
-            row["Loi_Production"] = str(prod_result)
+            try:
+                raise prod_result
+            except Exception:
+                traceback.print_exc()
+            errors["Production"] = str(prod_result)
         else:
-            row["RowCount_Production"] = prod_result["values"].get("RowCount")
-            row["TotalRevenue_Production"] = prod_result["values"].get("TotalRevenue")
-            row["Loi_Production"] = "; ".join(prod_result["errors"])
+            production_values = self._normalize_metric_map(prod_result.get("values", {}))
+            errors["Production"] = "; ".join(prod_result.get("errors", []))
 
         if isinstance(stg_result, Exception):
-            row["Loi_Staging"] = str(stg_result)
+            try:
+                raise stg_result
+            except Exception:
+                traceback.print_exc()
+            errors["Staging"] = str(stg_result)
         else:
-            row["RowCount_Staging"] = stg_result["values"].get("RowCount")
-            row["TotalRevenue_Staging"] = stg_result["values"].get("TotalRevenue")
-            row["Loi_Staging"] = "; ".join(stg_result["errors"])
+            staging_values = self._normalize_metric_map(stg_result.get("values", {}))
+            errors["Staging"] = "; ".join(stg_result.get("errors", []))
 
         if isinstance(dm_result, Exception):
-            row["Loi_DataMart"] = str(dm_result)
-        elif dm_result:
-            dm_row = dm_result[0]
-            row["RowCount_DataMart"] = dm_row.get("RowCount")
-            row["TotalRevenue_DataMart"] = dm_row.get("TotalRevenue")
+            try:
+                raise dm_result
+            except Exception:
+                traceback.print_exc()
+            errors["DataMart"] = str(dm_result)
+        else:
+            dm_data = dm_result[0] if dm_result else {}
+            datamart_values = self._normalize_metric_map(dm_data)
 
-        return row
+        metrics = self._resolve_metrics(
+            domain_name,
+            [production_values, staging_values, datamart_values],
+        )
+        rows = self._build_rows_by_source(metrics, production_values, staging_values, datamart_values)
+        columns = ["Nguon", *metrics]
+
+        return {
+            "domain": domain_name,
+            "title": self.DOMAIN_TITLES.get(domain_name, domain_name.upper()),
+            "columns": columns,
+            "rows": rows,
+            "errors": errors,
+        }
 
     async def compare_all(self, from_date: date, to_date: date) -> list[dict[str, Any]]:
-        domains = ["dim_luot_kham", "fact_thu_phi_dich_vu"]
+        domains = self.ORDERED_DOMAINS
         tasks = [self.compare_domain(domain, from_date, to_date) for domain in domains]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         rows: list[dict[str, Any]] = []
         for domain, result in zip(domains, results, strict=False):
             if isinstance(result, Exception):
+                try:
+                    raise result
+                except Exception:
+                    traceback.print_exc()
                 rows.append(
                     {
-                        "TenBang": domain,
-                        "RowCount_Production": None,
-                        "RowCount_Staging": None,
-                        "RowCount_DataMart": None,
-                        "TotalRevenue_Production": None,
-                        "TotalRevenue_Staging": None,
-                        "TotalRevenue_DataMart": None,
-                        "Loi_Production": str(result),
-                        "Loi_Staging": "",
-                        "Loi_DataMart": "",
+                        "domain": domain,
+                        "title": self.DOMAIN_TITLES.get(domain, domain.upper()),
+                        "columns": ["Nguon", "RowCount"],
+                        "rows": [
+                            {"Nguon": "Production", "RowCount": 0.0},
+                            {"Nguon": "Staging", "RowCount": 0.0},
+                            {"Nguon": "DataMart", "RowCount": 0.0},
+                        ],
+                        "errors": {"Production": str(result), "Staging": "", "DataMart": ""},
                     }
                 )
             else:

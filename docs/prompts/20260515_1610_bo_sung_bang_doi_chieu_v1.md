@@ -47,3 +47,49 @@ FROM {staging_schema}.DimBenh WITH (NOLOCK);
 **SMI NGHIÊM NGẶT:** TUYỆT ĐỐI KHÔNG SỬ DỤNG HOẶC HIỂN THỊ BẤT KỲ THẺ CITATION/DẪN NGUỒN NÀO TRONG MÃ NGUỒN VÀ BÁO CÁO!
 
 **# BÁO CÁO CỦA THỢ CODE**
+
+1) Đã tạo SQL template cho 4 domain Dimension mới
+- Đã tạo đủ 12 file theo cấu trúc:
+  - `dim_benh_nhan/{production.sql, staging.sql, datamart.sql}`
+  - `dim_benh/{production.sql, staging.sql, datamart.sql}`
+  - `dim_dich_vu/{production.sql, staging.sql, datamart.sql}`
+  - `dim_loai_goi_dich_vu/{production.sql, staging.sql, datamart.sql}`
+- Mỗi file đều tuân thủ:
+  - khai báo marker `@TuNgay/@DenNgay` để nhận `?`
+  - không lọc `WHERE` theo ngày
+  - `COUNT(1) AS [RowCount]`
+
+2) Đã giữ đúng giới hạn phạm vi
+- Không chỉnh sửa bất kỳ SQL nào trong:
+  - `src/db/templates/sql/dashboard_doichieu/dim_luot_kham/`
+  - `src/db/templates/sql/dashboard_doichieu/fact_thu_phi_dich_vu/`
+
+3) Đã refactor DoiChieuPage sang All-in-one Multi-Grid
+- Bỏ dropdown chọn bảng.
+- Header chỉ còn:
+  - Từ ngày
+  - Đến ngày
+  - nút `Chạy đối chiếu toàn bộ`
+- Kết quả hiển thị theo nhiều card/table trên cùng màn hình, sắp theo đúng thứ tự ưu tiên:
+  1. `dim_benh_nhan`
+  2. `dim_benh`
+  3. `dim_dich_vu`
+  4. `dim_loai_goi_dich_vu`
+  5. `dim_luot_kham`
+  6. `fact_thu_phi_dich_vu`
+
+4) Đã nâng cấp backend dynamic columns và xử lý None
+- Backend đối chiếu dùng `asyncio.gather` để chạy song song toàn bộ domain.
+- Dữ liệu trả về chuẩn hóa `None -> 0.0` trước khi render.
+- Bảng Dimension chỉ hiển thị metric `RowCount`.
+- Bảng `fact_thu_phi_dich_vu` hiển thị tập metric gồm:
+  - `RowCount`
+  - `TongTien`
+  - `TongTienSauTangGiam`
+
+5) Đã bổ sung chốt chặn kỹ thuật UI_PORT
+- `src/ui/main_app.py` có hàm `resolve_ui_port()` dùng `try...except` khi ép kiểu.
+- Nếu cấu hình lỗi hoặc không hợp lệ thì fallback về `9005`.
+
+6) Đã cập nhật báo cáo hệ thống
+- Đã ghi chi tiết thay đổi vào `REPORT_CHANGES.md`.

@@ -243,3 +243,83 @@
 ### 4) Đảm bảo an toàn scope trang UI
 - Các trang trong `src/ui/pages/` giữ mô hình wrapper function với `@ui.page(...)`.
 - Mỗi request đều khởi tạo instance class mới trong wrapper, không dùng instance toàn cục.
+
+## Phạm vi cập nhật theo yêu cầu 20260515_1610_bo_sung_bang_doi_chieu_v1
+- Tạo mới 12 SQL template cho 4 domain dimension:
+  - `src/db/templates/sql/dashboard_doichieu/dim_benh_nhan/{production.sql,staging.sql,datamart.sql}`
+  - `src/db/templates/sql/dashboard_doichieu/dim_benh/{production.sql,staging.sql,datamart.sql}`
+  - `src/db/templates/sql/dashboard_doichieu/dim_dich_vu/{production.sql,staging.sql,datamart.sql}`
+  - `src/db/templates/sql/dashboard_doichieu/dim_loai_goi_dich_vu/{production.sql,staging.sql,datamart.sql}`
+- Cập nhật `src/ui/dashboard_app.py`
+- Cập nhật `src/ui/pages/doi_chieu_page.py`
+- Cập nhật `src/ui/main_app.py`
+- Cập nhật `docs/prompts/20260515_1610_bo_sung_bang_doi_chieu_v1.md`
+
+## Nội dung đã thực hiện
+
+### 1) Mở rộng domain đối chiếu theo thứ tự ưu tiên mới
+- Backend đối chiếu mở rộng danh sách domain theo đúng thứ tự hiển thị:
+  1. `dim_benh_nhan`
+  2. `dim_benh`
+  3. `dim_dich_vu`
+  4. `dim_loai_goi_dich_vu`
+  5. `dim_luot_kham`
+  6. `fact_thu_phi_dich_vu`
+
+### 2) Tạo SQL template full-load count cho 4 dimension mới
+- Mỗi file đều có:
+  - `SET NOCOUNT ON;`
+  - `DECLARE @TuNgay DATE = ?;`
+  - `DECLARE @DenNgay DATE = ?;`
+  - `SELECT COUNT(1) AS [RowCount]`
+- Không dùng `@TuNgay/@DenNgay` trong `WHERE` cho 4 bảng dim mới.
+- Không chỉnh sửa bất kỳ SQL nào thuộc `dim_luot_kham` và `fact_thu_phi_dich_vu`.
+
+### 3) Refactor DoiChieuPage sang Multi-Grid All-in-one
+- Giao diện bỏ dropdown chọn bảng.
+- Header chỉ giữ:
+  - `Từ ngày`
+  - `Đến ngày`
+  - nút `Chạy đối chiếu toàn bộ`
+- Kết quả render trong `ui.scroll_area`, mỗi domain là một `ui.card()` + `ui.table()` riêng.
+- Container kết quả được `clear()` trước mỗi lần chạy.
+
+### 4) Dynamic columns và chuẩn hóa None -> 0
+- Backend chuẩn hóa toàn bộ số liệu `None` về `0.0` trước khi trả về UI.
+- Bảng kết quả sinh cột động theo keys metric.
+- Với dimension: chỉ hiển thị metric `RowCount`.
+- Với `fact_thu_phi_dich_vu`: bảo đảm hiển thị tập metric gồm `RowCount`, `TongTien`, `TongTienSauTangGiam` (nếu thiếu từ SQL sẽ mặc định 0).
+
+### 5) Chốt chặn kỹ thuật UI_PORT
+- `src/ui/main_app.py` bổ sung hàm `resolve_ui_port()` dùng `try/except` khi ép kiểu port.
+- Fallback cứng `9005` khi biến môi trường rỗng/sai định dạng/<=0.
+
+## Phạm vi cập nhật theo yêu cầu 20260516_1105_sua_loi_dashboard_doi_chieu_v1
+- Cập nhật `src/ui/dashboard_app.py`
+- Cập nhật `REPORT_CHANGES.md`
+- Cập nhật `docs/prompts/20260516_1105_sua_loi_dashboard_doi_chieu_v1.md`
+
+## Nội dung đã thực hiện
+
+### 1) Khắc phục lỗi gộp số liệu Decimal gây hiển thị 0
+- Nguyên nhân gốc: hàm gộp chỉ nhận `int/float`, trong khi giá trị `SUM` từ pyodbc thường trả về `decimal.Decimal`, dẫn tới bị loại khỏi phép cộng.
+- Đã sửa:
+  - `from decimal import Decimal`
+  - `_merge_numeric` nhận `(int, float, Decimal)`
+  - `_normalize_metric_map` nhận `(int, float, Decimal)`
+- Kết quả: số liệu `TongTien`, `TongTienSauTangGiam` được cộng dồn đúng thay vì rơi về 0.
+
+### 2) Cố định mapping đa nguồn đúng cấu trúc dữ liệu
+- Giữ chuẩn:
+  - `prod_result`/`stg_result` đọc từ dict `['values']`.
+  - `dm_result` đọc từ list dòng đầu tiên.
+- Bổ sung chống crash khi Datamart trả rỗng:
+  - `dm_data = dm_result[0] if dm_result else {}`
+- Rà soát và xác nhận không còn tàn dư `TotalRevenue`; mapping chỉ dùng key đúng chuẩn:
+  - `TongTien`
+  - `TongTienSauTangGiam`
+
+### 3) Bổ sung traceback bắt buộc cho mọi nhánh lỗi
+- Đã thêm `import traceback`.
+- Tại các nhánh exception của Production, Staging, Datamart và lỗi tổng hợp domain, đều in đầy đủ stack trace bằng `traceback.print_exc()` trước khi trả trạng thái lỗi về UI.
+- Mục tiêu: không còn hiện tượng nuốt lỗi làm khó truy vết trên terminal Master.

@@ -15,8 +15,7 @@ class DoiChieuPage(BaseUI):
         super().__init__(page_title="Dashboard ETL - Đối chiếu kết quả", navigation_items=NAV_ITEMS)
         self.from_date = date.today().replace(day=1)
         self.to_date = date.today()
-        self.rows: list[dict[str, Any]] = []
-        self.table: ui.table | None = None
+        self.result_container: ui.column | None = None
         self.backend = DashboardCompareBackend()
 
     @staticmethod
@@ -35,17 +34,36 @@ class DoiChieuPage(BaseUI):
     def _on_to_date_change(self, value: Any) -> None:
         self.to_date = self._to_native_date(value)
 
-    async def load_data(self) -> None:
+    @staticmethod
+    def _build_table_columns(keys: list[str]) -> list[dict[str, Any]]:
+        return [{"name": key, "label": key, "field": key, "align": "left"} for key in keys]
+
+    def _render_domain_card(self, domain_result: dict[str, Any]) -> None:
+        if self.result_container is None:
+            return
+        with self.result_container:
+            with ui.card().classes("w-full"):
+                ui.label(domain_result.get("title", "BẢNG ĐỐI CHIẾU")).classes("text-base font-semibold")
+                table_columns = self._build_table_columns(domain_result.get("columns", []))
+                table_rows = domain_result.get("rows", [])
+                ui.table(columns=table_columns, rows=table_rows).classes("w-full")
+
+                errors = domain_result.get("errors", {})
+                for source in ["Production", "Staging", "DataMart"]:
+                    error_text = (errors.get(source, "") or "").strip()
+                    if error_text:
+                        ui.label(f"{source}: {error_text}").classes("text-red-600 text-sm")
+
+    async def run_compare_all(self) -> None:
         try:
-            self.rows = await self.backend.compare_all(self.from_date, self.to_date)
-            if self.table is not None:
-                self.table.columns = [
-                    {"name": key, "label": key, "field": key, "align": "left"}
-                    for key in (self.rows[0].keys() if self.rows else [])
-                ]
-                self.table.rows = self.rows
-                self.table.update()
-            ui.notify("Đã tải dữ liệu đối chiếu", color="positive")
+            if self.result_container is not None:
+                self.result_container.clear()
+
+            results = await self.backend.compare_all(self.from_date, self.to_date)
+            for domain_result in results:
+                self._render_domain_card(domain_result)
+
+            ui.notify("Đã chạy đối chiếu toàn bộ", color="positive")
         except Exception as exc:
             ui.notify(f"Lỗi đối chiếu: {exc}", color="negative")
 
@@ -60,9 +78,10 @@ class DoiChieuPage(BaseUI):
                 ui.date(value=self.to_date.isoformat(), on_change=lambda e: self._on_to_date_change(e.value)).props(
                     "label=Đến ngày"
                 )
-                ui.button("Tải dữ liệu đối chiếu", on_click=self.load_data, color="primary")
+                ui.button("Chạy đối chiếu toàn bộ", on_click=self.run_compare_all, color="primary")
 
-            self.table = ui.table(columns=[], rows=self.rows).classes("w-full")
+            with ui.scroll_area().classes("w-full h-[70vh]"):
+                self.result_container = ui.column().classes("w-full gap-4")
 
 
 @ui.page("/doi-chieu")

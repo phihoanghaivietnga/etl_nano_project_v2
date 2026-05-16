@@ -1,5 +1,7 @@
 SET NOCOUNT ON;
 
+DECLARE @TuNgay DATE = ?;
+DECLARE @DenNgay DATE = ?;
 
 SELECT COUNT(1) AS [RowCount]
 FROM dbo.DMBenhNhan WITH (NOLOCK);

@@ -5,6 +5,18 @@
 ## MỤC LỤC NGUỒN
   [DESCRIPTION]: ETL job scripts and SQL templates
 
+### src/db/templates/sql/dashboard_doichieu/dim_benh/datamart.sql - Tác vụ ETL và logic xử lý dữ liệu theo bảng/miền nghiệp vụ
+### src/db/templates/sql/dashboard_doichieu/dim_benh/production.sql - Tác vụ ETL và logic xử lý dữ liệu theo bảng/miền nghiệp vụ
+### src/db/templates/sql/dashboard_doichieu/dim_benh/staging.sql - Tác vụ ETL và logic xử lý dữ liệu theo bảng/miền nghiệp vụ
+### src/db/templates/sql/dashboard_doichieu/dim_benh_nhan/datamart.sql - Tác vụ ETL và logic xử lý dữ liệu theo bảng/miền nghiệp vụ
+### src/db/templates/sql/dashboard_doichieu/dim_benh_nhan/production.sql - Tác vụ ETL và logic xử lý dữ liệu theo bảng/miền nghiệp vụ
+### src/db/templates/sql/dashboard_doichieu/dim_benh_nhan/staging.sql - Tác vụ ETL và logic xử lý dữ liệu theo bảng/miền nghiệp vụ
+### src/db/templates/sql/dashboard_doichieu/dim_dich_vu/datamart.sql - Tác vụ ETL và logic xử lý dữ liệu theo bảng/miền nghiệp vụ
+### src/db/templates/sql/dashboard_doichieu/dim_dich_vu/production.sql - Tác vụ ETL và logic xử lý dữ liệu theo bảng/miền nghiệp vụ
+### src/db/templates/sql/dashboard_doichieu/dim_dich_vu/staging.sql - Tác vụ ETL và logic xử lý dữ liệu theo bảng/miền nghiệp vụ
+### src/db/templates/sql/dashboard_doichieu/dim_loai_goi_dich_vu/datamart.sql - Tác vụ ETL và logic xử lý dữ liệu theo bảng/miền nghiệp vụ
+### src/db/templates/sql/dashboard_doichieu/dim_loai_goi_dich_vu/production.sql - Tác vụ ETL và logic xử lý dữ liệu theo bảng/miền nghiệp vụ
+### src/db/templates/sql/dashboard_doichieu/dim_loai_goi_dich_vu/staging.sql - Tác vụ ETL và logic xử lý dữ liệu theo bảng/miền nghiệp vụ
 ### src/db/templates/sql/dashboard_doichieu/dim_luot_kham/datamart.sql - Tác vụ ETL và logic xử lý dữ liệu theo bảng/miền nghiệp vụ
 ### src/db/templates/sql/dashboard_doichieu/dim_luot_kham/production.sql - Tác vụ ETL và logic xử lý dữ liệu theo bảng/miền nghiệp vụ
 ### src/db/templates/sql/dashboard_doichieu/dim_luot_kham/staging.sql - Tác vụ ETL và logic xử lý dữ liệu theo bảng/miền nghiệp vụ
@@ -22,6 +34,142 @@
 
 ## NỘI DUNG GỘP
 
+### SOURCE: src/db/templates/sql/dashboard_doichieu/dim_benh/datamart.sql
+```sql
+SET NOCOUNT ON;
+
+DECLARE @TuNgay DATE = ?;
+DECLARE @DenNgay DATE = ?;
+
+SELECT COUNT(1) AS [RowCount]
+FROM dm.DimBenh WITH (NOLOCK)
+WHERE NguonDuLieuKey = 2;
+```
+
+### SOURCE: src/db/templates/sql/dashboard_doichieu/dim_benh/production.sql
+```sql
+SET NOCOUNT ON;
+
+DECLARE @TuNgay DATE = ?;
+DECLARE @DenNgay DATE = ?;
+
+SELECT COUNT(1) AS [RowCount]
+FROM dbo.DMBenh WITH (NOLOCK);
+```
+
+### SOURCE: src/db/templates/sql/dashboard_doichieu/dim_benh/staging.sql
+```sql
+SET NOCOUNT ON;
+
+DECLARE @TuNgay DATE = ?;
+DECLARE @DenNgay DATE = ?;
+
+SELECT COUNT(1) AS [RowCount]
+FROM {staging_schema}.DMBenh WITH (NOLOCK);
+```
+
+### SOURCE: src/db/templates/sql/dashboard_doichieu/dim_benh_nhan/datamart.sql
+```sql
+SET NOCOUNT ON;
+
+DECLARE @TuNgay DATE = ?;
+DECLARE @DenNgay DATE = ?;
+
+SELECT COUNT(1) AS [RowCount]
+FROM dm.DimBenhNhan WITH (NOLOCK)
+WHERE NguonDuLieuKey = 2;
+```
+
+### SOURCE: src/db/templates/sql/dashboard_doichieu/dim_benh_nhan/production.sql
+```sql
+SET NOCOUNT ON;
+
+DECLARE @TuNgay DATE = ?;
+DECLARE @DenNgay DATE = ?;
+
+SELECT COUNT(1) AS [RowCount]
+FROM dbo.DMBenhNhan WITH (NOLOCK);
+```
+
+### SOURCE: src/db/templates/sql/dashboard_doichieu/dim_benh_nhan/staging.sql
+```sql
+SET NOCOUNT ON;
+
+DECLARE @TuNgay DATE = ?;
+DECLARE @DenNgay DATE = ?;
+
+SELECT COUNT(1) AS [RowCount]
+FROM {staging_schema}.DMBenhNhan WITH (NOLOCK);
+```
+
+### SOURCE: src/db/templates/sql/dashboard_doichieu/dim_dich_vu/datamart.sql
+```sql
+SET NOCOUNT ON;
+
+DECLARE @TuNgay DATE = ?;
+DECLARE @DenNgay DATE = ?;
+
+SELECT COUNT(1) AS [RowCount]
+FROM dm.DimDichVu WITH (NOLOCK)
+WHERE NguonDuLieuKey = 2;
+```
+
+### SOURCE: src/db/templates/sql/dashboard_doichieu/dim_dich_vu/production.sql
+```sql
+SET NOCOUNT ON;
+
+DECLARE @TuNgay DATE = ?;
+DECLARE @DenNgay DATE = ?;
+
+SELECT COUNT(1) AS [RowCount]
+FROM dbo.DMDichVuChiTiet WITH (NOLOCK);
+```
+
+### SOURCE: src/db/templates/sql/dashboard_doichieu/dim_dich_vu/staging.sql
+```sql
+SET NOCOUNT ON;
+
+DECLARE @TuNgay DATE = ?;
+DECLARE @DenNgay DATE = ?;
+
+SELECT COUNT(1) AS [RowCount]
+FROM {staging_schema}.DMDichVuChiTiet WITH (NOLOCK);
+```
+
+### SOURCE: src/db/templates/sql/dashboard_doichieu/dim_loai_goi_dich_vu/datamart.sql
+```sql
+SET NOCOUNT ON;
+
+DECLARE @TuNgay DATE = ?;
+DECLARE @DenNgay DATE = ?;
+
+SELECT COUNT(1) AS [RowCount] 
+FROM dm.DimLoaiGoiDichVu WITH (NOLOCK)
+WHERE NguonDuLieuKey = 2;
+```
+
+### SOURCE: src/db/templates/sql/dashboard_doichieu/dim_loai_goi_dich_vu/production.sql
+```sql
+SET NOCOUNT ON;
+
+DECLARE @TuNgay DATE = ?;
+DECLARE @DenNgay DATE = ?;
+
+SELECT COUNT(1) AS [RowCount]
+FROM dbo.LoaiGoiDichVuNT WITH (NOLOCK);
+```
+
+### SOURCE: src/db/templates/sql/dashboard_doichieu/dim_loai_goi_dich_vu/staging.sql
+```sql
+SET NOCOUNT ON;
+
+DECLARE @TuNgay DATE = ?;
+DECLARE @DenNgay DATE = ?;
+
+SELECT COUNT(1) AS [RowCount]
+FROM {staging_schema}.LoaiGoiDichVuNT WITH (NOLOCK);
+```
+
 ### SOURCE: src/db/templates/sql/dashboard_doichieu/dim_luot_kham/datamart.sql
 ```sql
 SET NOCOUNT ON;
@@ -30,9 +178,9 @@ DECLARE @TuNgay DATE = ?;
 DECLARE @DenNgay DATE = ?;
 
 SELECT
-    COUNT(1) AS RowCount
+    COUNT(1) AS [RowCount]
 FROM dm.DimLuotKham WITH (NOLOCK)
-WHERE CAST(NgayVaoKham AS DATE) BETWEEN @TuNgay AND @DenNgay;
+WHERE NgayVaoKham >= @TuNgay AND NgayVaoKham < DATEADD(DAY, 1, @DenNgay);
 ```
 
 ### SOURCE: src/db/templates/sql/dashboard_doichieu/dim_luot_kham/production.sql
@@ -42,10 +190,9 @@ SET NOCOUNT ON;
 DECLARE @TuNgay DATE = ?;
 DECLARE @DenNgay DATE = ?;
 
-SELECT
-    COUNT(1) AS RowCount
+SELECT COUNT(1) AS [RowCount]
 FROM dbo.HoSoKhamBenhNgoaiTru WITH (NOLOCK)
-WHERE CAST(NgayVaoKham AS DATE) BETWEEN @TuNgay AND @DenNgay;
+WHERE NgayVaoKham >= @TuNgay AND NgayVaoKham < DATEADD(DAY, 1, @DenNgay);
 ```
 
 ### SOURCE: src/db/templates/sql/dashboard_doichieu/dim_luot_kham/staging.sql
@@ -56,9 +203,9 @@ DECLARE @TuNgay DATE = ?;
 DECLARE @DenNgay DATE = ?;
 
 SELECT
-    COUNT(1) AS RowCount
+    COUNT(1) AS [RowCount]
 FROM {staging_schema}.HoSoKhamBenhNgoaiTru WITH (NOLOCK)
-WHERE CAST(NgayVaoKham AS DATE) BETWEEN @TuNgay AND @DenNgay;
+WHERE NgayVaoKham >= @TuNgay AND NgayVaoKham < DATEADD(DAY, 1, @DenNgay);
 ```
 
 ### SOURCE: src/db/templates/sql/dashboard_doichieu/fact_thu_phi_dich_vu/datamart.sql
@@ -68,10 +215,27 @@ SET NOCOUNT ON;
 DECLARE @TuNgay DATE = ?;
 DECLARE @DenNgay DATE = ?;
 
-SELECT
-    SUM(ISNULL(TongTienSauTangGiam, TongTien)) AS TotalRevenue
-FROM dm.FactThuPhiDichVu WITH (NOLOCK)
-WHERE CAST(NgayDenKham AS DATE) BETWEEN @TuNgay AND @DenNgay;
+SELECT SUM(TongTien_DV + TongTien_BH) TongTien, SUM(TongTienSauTangGiam_DV + TongTienSauTangGiam_BH) TongTienSauTangGiam
+FROM
+(
+	SELECT NgayDenKham, SUM(TongTien_DV) TongTien_DV, SUM(TongTienSauTangGiam_DV) TongTienSauTangGiam_DV
+		, SUM(TongTien_BH) TongTien_BH, SUM(TongTienSauTangGiam_BH) TongTienSauTangGiam_BH
+	FROM
+	(
+	select DateKey NgayDenKham, sum(TongTien) TongTien_DV, sum(TongTienSauTangGiam) TongTienSauTangGiam_DV
+		, 0 TongTien_BH, 0 TongTienSauTangGiam_BH from dm.FactThuPhiDichVu 
+	where CoSoKey = 1 and NguonDuLieuKey = 2 and LoaiHinh = 'DV'
+		and datekey >= YEAR(@TuNgay) * 10000 + MONTH(@TuNgay) * 100 + DAY(@TuNgay) and datekey <= YEAR(@DenNgay) * 10000 + MONTH(@DenNgay) * 100 + DAY(@DenNgay)
+	group by DateKey
+	union
+	select DateKey NgayDenKham, 0 TongTien_DV, 0 TongTienSauTangGiam_DV
+		, SUM(TongTien) TongTien_BH, SUM(TongTienSauTangGiam) TongTienSauTangGiam_BH from dm.FactThuPhiDichVu 
+	where CoSoKey = 1 and NguonDuLieuKey = 2 and LoaiHinh = 'BH'
+		and datekey >= YEAR(@TuNgay) * 10000 + MONTH(@TuNgay) * 100 + DAY(@TuNgay) and datekey <= YEAR(@DenNgay) * 10000 + MONTH(@DenNgay) * 100 + DAY(@DenNgay)
+	group by DateKey
+	) as temp
+	group by NgayDenKham
+) as tblTemp;
 ```
 
 ### SOURCE: src/db/templates/sql/dashboard_doichieu/fact_thu_phi_dich_vu/production.sql
@@ -81,10 +245,38 @@ SET NOCOUNT ON;
 DECLARE @TuNgay DATE = ?;
 DECLARE @DenNgay DATE = ?;
 
-SELECT
-    SUM(ISNULL(TongTienSauTangGiam, TongTien)) AS TotalRevenue
-FROM dbo.ThuPhiDichVu WITH (NOLOCK)
-WHERE CAST(NgayDenKham AS DATE) BETWEEN @TuNgay AND @DenNgay;
+SELECT SUM(TongTien_DV + TongTien_BH) TongTien, SUM(TongTienSauTangGiam_DV + TongTienSauTangGiam_BH) TongTienSauTangGiam
+FROM
+(
+	SELECT NgayDenKham, SUM(TongTien_DV) TongTien_DV, SUM(TongTienSauTangGiam_DV) TongTienSauTangGiam_DV
+		, SUM(TongTien_BH) TongTien_BH, SUM(TongTienSauTangGiam_BH) TongTienSauTangGiam_BH
+	FROM
+	(
+	select cast(a.ngaydenkham as date) AS NgayDenKham, sum(a.Tongtien) TongTien_DV,  sum(a.Tongtien - ISNULL(b.sotiengiam, 0) + ISNULL(b.sotientang, 0)) TongTienSauTangGiam_DV, 0 TongTien_BH, 0 TongTienSauTangGiam_BH 
+	from  ThuPhiDichVu a
+		left join (SELECT
+					MaHoSo,
+					MaChiTieu,
+					MaPhieuDichVu,
+					SUM(SoTienGiam) AS SoTienGiam,
+					SUM(SoTienTang) AS SoTienTang
+				FROM ThuPhiTangGiam
+				WHERE DaDongTien = 1
+				  AND CAST(NgayDenKham AS DATE) >= @TuNgay
+				  AND CAST(NgayDenKham AS DATE) <= @DenNgay
+				GROUP BY MaHoSo, MaChiTieu, MaPhieuDichVu) b on a.MaHoSo = b.MaHoSo and a.MaChiTieu = b.MaChiTieu and a.MaPhieuDichVu = b.MaPhieuDichVu
+	where a.NgayDenKham >= @TuNgay and a.ngaydenkham < DATEADD(DAY, 1, @DenNgay)
+		and a.DaDongTien = 1
+	group by cast(a.ngaydenkham as date)
+	UNION
+	select cast(ngaydenkham as date) AS NgayDenKham, 0 TongTien_DV, 0 TongTienSauTangGiam_DV, sum(a.TongTien) TongTien_BH, sum(a.TongTien + a.TienChenhLech) TongTienSauTangGiam_BH
+	from ThuPhiBaoHiem a
+	where a.NgayDenKham >= @TuNgay and a.ngaydenkham < DATEADD(DAY, 1, @DenNgay)
+		and a.DaDongTien = 1
+	group by cast(ngaydenkham as date)
+	) as temp
+	GROUP BY NgayDenKham
+) as tbltemp
 ```
 
 ### SOURCE: src/db/templates/sql/dashboard_doichieu/fact_thu_phi_dich_vu/staging.sql
@@ -94,10 +286,38 @@ SET NOCOUNT ON;
 DECLARE @TuNgay DATE = ?;
 DECLARE @DenNgay DATE = ?;
 
-SELECT
-    SUM(ISNULL(TongTienSauTangGiam, TongTien)) AS TotalRevenue
-FROM {staging_schema}.ThuPhiDichVu WITH (NOLOCK)
-WHERE CAST(NgayDenKham AS DATE) BETWEEN @TuNgay AND @DenNgay;
+SELECT SUM(TongTien_DV + TongTien_BH) TongTien, SUM(TongTienSauTangGiam_DV + TongTienSauTangGiam_BH) TongTienSauTangGiam
+FROM
+(
+	SELECT NgayDenKham, SUM(TongTien_DV) TongTien_DV, SUM(TongTienSauTangGiam_DV) TongTienSauTangGiam_DV
+		, SUM(TongTien_BH) TongTien_BH, SUM(TongTienSauTangGiam_BH) TongTienSauTangGiam_BH
+	FROM
+	(
+	select cast(a.ngaydenkham as date) AS NgayDenKham, sum(a.Tongtien) TongTien_DV,  sum(a.Tongtien - ISNULL(b.sotiengiam, 0) + ISNULL(b.sotientang, 0)) TongTienSauTangGiam_DV, 0 TongTien_BH, 0 TongTienSauTangGiam_BH 
+	from  {staging_schema}.ThuPhiDichVu a
+		left join (SELECT
+					MaHoSo,
+					MaChiTieu,
+					MaPhieuDichVu,
+					SUM(SoTienGiam) AS SoTienGiam,
+					SUM(SoTienTang) AS SoTienTang
+				FROM {staging_schema}.ThuPhiTangGiam
+				WHERE DaDongTien = 1
+				  AND CAST(NgayDenKham AS DATE) >= @TuNgay
+				  AND CAST(NgayDenKham AS DATE) < DATEADD(DAY, 1, @DenNgay)
+				GROUP BY MaHoSo, MaChiTieu, MaPhieuDichVu) b on a.MaHoSo = b.MaHoSo and a.MaChiTieu = b.MaChiTieu and a.MaPhieuDichVu = b.MaPhieuDichVu
+	where a.NgayDenKham >= @TuNgay and a.ngaydenkham < DATEADD(DAY, 1, @DenNgay)
+		and a.DaDongTien = 1
+	group by cast(a.ngaydenkham as date)
+	UNION
+	select cast(ngaydenkham as date) AS NgayDenKham, 0 TongTien_DV, 0 TongTienSauTangGiam_DV, sum(a.TongTien) TongTien_BH, sum(a.TongTien + a.TienChenhLech) TongTienSauTangGiam_BH
+	from {staging_schema}.ThuPhiBaoHiem a
+	where a.NgayDenKham >= @TuNgay and a.ngaydenkham < DATEADD(DAY, 1, @DenNgay)
+		and a.DaDongTien = 1
+	group by cast(ngaydenkham as date)
+	) as temp
+	GROUP BY NgayDenKham
+) as tbltemp
 ```
 
 ### SOURCE: src/db/templates/sql/dashboard_doichieu/ho_so_kham_benh_ngoai_tru_doi_chieu.sql
