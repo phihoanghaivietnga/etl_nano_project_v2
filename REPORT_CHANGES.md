@@ -323,3 +323,56 @@
 - Đã thêm `import traceback`.
 - Tại các nhánh exception của Production, Staging, Datamart và lỗi tổng hợp domain, đều in đầy đủ stack trace bằng `traceback.print_exc()` trước khi trả trạng thái lỗi về UI.
 - Mục tiêu: không còn hiện tượng nuốt lỗi làm khó truy vết trên terminal Master.
+
+## Phạm vi cập nhật theo yêu cầu 20260518_0900_xay_dung_khung_dong_bo_v1
+- Tạo mới `src/jobs/__init__.py`
+- Tạo mới `src/jobs/dimension_loader.py`
+- Tạo mới `src/jobs/fact_loader.py`
+- Tạo mới `src/jobs/sync_orchestrator.py`
+- Cập nhật `PROJECT_CHRONICLE.md`
+- Cập nhật `docs/knowledge/GEM_CODE_MAP.md`
+- Cập nhật `docs/knowledge/GEM_DATA_FLOW.md`
+- Cập nhật `docs/knowledge/GEM_AUTO_PIPELINE.md`
+- Cập nhật `docs/knowledge/GEM_DB_SCHEMAS.md`
+- Cập nhật `docs/knowledge/GEM_DEPENDENCY_GRAPH.md`
+- Cập nhật `docs/prompts/20260518_0900_xay_dung_khung_dong_bo_v1.md`
+
+## Nội dung đã thực hiện
+
+### 1) Xây dựng khung jobs theo OOP, kế thừa BaseLoader
+- `DimensionLoader(BaseLoader)`:
+  - Full-load 2-Hop: Production -> ODS cơ sở -> Datamart.
+  - Chặng 1 dùng `TRUNCATE` + `bcp -w` theo từng bảng nguồn dimension.
+  - Chặng 2 chạy MERGE template theo domain.
+- `FactLoader(BaseLoader)`:
+  - Incremental 3-Hop với Lookback D-3.
+  - Prod -> Landing: `TRUNCATE stg_nano_v2` + `bcp -w`.
+  - Landing -> ODS: MERGE có hard delete giới hạn thời gian D-3.
+  - ODS -> Datamart: MERGE batch `TOP (10000)`.
+  - Áp dụng fallback seed `-1` cho `LuotKhamKey`, `BenhNhanKey`, `DichVuKey`.
+  - Cleanup Landing ở đầu và cuối luồng (`finally`).
+- `SyncOrchestrator`:
+  - Chạy tuần tự từng facility.
+  - Hỗ trợ Selective Sync qua `ACTIVE_FACILITIES` hoặc `run(target_facilities=...)`.
+  - Nếu không truyền hoặc `ALL` thì chạy toàn bộ facility đã định nghĩa.
+
+### 2) Chốt chặn an toàn dữ liệu Hard Delete
+- ODS hard delete chỉ trong cửa sổ D-3 (`Target.<NgayCol> BETWEEN @LookbackDate AND @ToDate`).
+- Datamart hard delete có đủ 3 chốt:
+  - cửa sổ D-3,
+  - `Target.NguonDuLieuKey = @CurrentNguonDuLieu`,
+  - `Target.MaCoSo = @CurrentMaCoSo`.
+- Điều kiện ON MERGE Datamart cô lập business key đa cơ sở bằng `Target.NguonDuLieuKey = Source.NguonDuLieuKey`.
+
+### 3) Cập nhật tri thức bắt buộc
+- `PROJECT_CHRONICLE.md`: thêm cụm ADR-06..ADR-09 cho đợt ETL v1.
+- `GEM_CODE_MAP.md`: khai báo 3 module jobs mới và chức năng.
+- `GEM_DATA_FLOW.md`: đặc tả 2-Hop/3-Hop, D-3, seed `-1`, hard delete guardrails.
+- `GEM_AUTO_PIPELINE.md`: quy tắc điều phối tuần tự + selective sync.
+- `GEM_DB_SCHEMAS.md`: chuẩn hóa vai trò schema `stg_nano_v2`, `<facility>_hisnano_v2`, `dm`.
+- `GEM_DEPENDENCY_GRAPH.md`: đồ thị phụ thuộc module mới.
+
+### 4) Kiểm tra kỹ thuật
+- Đã chạy kiểm tra cú pháp:
+  - `python -m py_compile src/jobs/dimension_loader.py src/jobs/fact_loader.py src/jobs/sync_orchestrator.py src/jobs/__init__.py`
+- Kết quả: pass, không có lỗi syntax.

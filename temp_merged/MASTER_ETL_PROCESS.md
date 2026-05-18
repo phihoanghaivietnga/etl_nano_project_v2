@@ -31,6 +31,11 @@
 ### src/db/templates/sql/fact/DimLuotKham_merge.sql - Tác vụ ETL và logic xử lý dữ liệu theo bảng/miền nghiệp vụ
 ### src/db/templates/sql/fact/FactDoThiLuc_merge.sql - Tác vụ ETL và logic xử lý dữ liệu theo bảng/miền nghiệp vụ
 ### src/db/templates/sql/fact/FactThuPhiDichVu_ThuPhiGoi_merge.sql - Tác vụ ETL và logic xử lý dữ liệu theo bảng/miền nghiệp vụ
+### src/db/templates/sql/fact/merge_fact_thuphichvu_3in1.sql - Tác vụ ETL và logic xử lý dữ liệu theo bảng/miền nghiệp vụ
+### src/jobs/__init__.py - Tác vụ ETL và logic xử lý dữ liệu theo bảng/miền nghiệp vụ
+### src/jobs/dimension_loader.py - Tác vụ ETL và logic xử lý dữ liệu theo bảng/miền nghiệp vụ
+### src/jobs/fact_loader.py - Tác vụ ETL và logic xử lý dữ liệu theo bảng/miền nghiệp vụ
+### src/jobs/sync_orchestrator.py - Tác vụ ETL và logic xử lý dữ liệu theo bảng/miền nghiệp vụ
 
 ## NỘI DUNG GỘP
 
@@ -1789,4 +1794,1235 @@ WHEN NOT MATCHED BY TARGET THEN
         source.DaThucHien,
         source.TrangThaiPhieu
     );
+```
+
+### SOURCE: src/db/templates/sql/fact/merge_fact_thuphichvu_3in1.sql
+```sql
+--
+-- FILE: merge_fact_thuphichvu_3in1.sql
+-- AUTHOR: GitHub Copilot (Builder)
+-- CREATED: 2026-03-17
+-- MODIFIED: 2026-03-27
+-- VERSION: 1.9.1
+-- PURPOSE: MERGE 3-in-1 doanh thu vào dm.FactThuPhiDichVu từ 3 nguồn:
+--          1. ThuPhiDichVu (Dịch vụ) → LoaiHinh = 'DV'
+--          2. ThuPhiBaoHiem (Bảo hiểm) → LoaiHinh = 'BH'
+--          3. ThuPhiTangGiam → JOIN để tính TongTienSauTangGiam cho nguồn DV
+--
+--          Logic:
+--          - ThuPhiDichVu LEFT JOIN ThuPhiTangGiam để tính TongTienSauTangGiam
+--          - ThuPhiBaoHiem: TongTienSauTangGiam = TongTien + TienChenhLech
+--          - DateKey = YEAR * 10000 + MONTH * 100 + DAY (từ NgayDoanhThu)
+--          - LuotKhamKey, BenhNhanKey, DichVuKey: lookup từ DimLuotKham, DimDichVu
+--          - MaChiTieuBK: Business Key bất biến = NguonDuLieuKey + ':' + MaChiTieu
+--            (FIX E018 v1.7.3: Dung separator ':' thay vi '_' de dong nhat voi CLAUDE.md Section 7.1)
+--
+-- PARAMETERS (placeholders de thay the trong _substitute_params):
+--     {nguon_dulieu_key} INT     - Key của nguồn dữ liệu (vd: 1 cho hanoi)
+--     {coso_key}         INT     - Key của cơ sở (vd: 1 cho hanoi)
+--     {ma_co_so}         NVARCHAR(50) - Ma co so (vd: 'hanoi')
+--     {date_from}        DATE    - Ngày bắt đầu (inclusive)
+--     {date_to}          DATE    - Ngày kết thúc (inclusive)
+--     {staging_schema}   NVARCHAR(128) - Schema staging của facility
+--
+-- HISTORY:
+--     - v1.0.0 [2026-03-17]: Tạo mới - MERGE 3-in-1 từ chỉ thị Opus Architect
+--     - v1.1.0 [2026-03-17]: Sửa MERGE key: thay MaThuPhi bằng MaChiTieu + MaPhieuDichVu
+--     - v1.2.0 [2026-03-18]: Thay hardcode bang placeholder facility va keys
+--     - v1.4.0 [2026-03-24]: Bo sung MaDotThuPhi vao khoa MERGE
+--     - v1.5.0 [2026-03-24]: Go MaDotThuPhi (khong ton tai trong schema thuc te)
+--     - v1.6.0 [2026-03-25]: FIX E010 - Loai bo DECLARE @DateFrom/@DateTo, thay bang embedded
+--                            string ({date_from}/{date_to}) de tranh GO batch scope loi
+--     - v1.7.1 [2026-03-26]: LOAI BO MaChiTieuBK khoi ON clause (gay NULL comparison loi)
+--                            MaChiTieuBK chi la data column, khong phai identity key
+--     - v1.7.0 [2026-03-26]: [FEATURE] Them MaChiTieuBK (Business Key bat bien) vao MERGE
+--                            + Toi uu cong thuc TongTienSauTangGiam (khong con CASE WHEN)
+--                            + LOOKUP DichVuKey qua MaChiTieuBK thay vi MaChiTieu
+--     - v1.8.0 [2026-03-27]: [FIX E020] LEFT JOIN -> tg_agg subquery (SUM aggregation)
+--                            trong Nguon 1 ThuPhiDichVu de tranh nhan ban dong
+--                            khi ThuPhiTangGiam co nhieu record cung khoa.
+--                            Cong thuc: TongTienSauTangGiam = TongTien - TongGiam + TongTang
+--     - v1.9.1 [2026-04-03]: [FIX E021] Them date filter vao tg_agg subquery.
+--                            Root cause: Khong co date filter -> tg_agg SUM toan bo lich su,
+--                            ngay cuoi cung nhan TatCaTangGiam = SUM TatCa -> bi sai thanh 0.
+--                            Fix: Loc tg_agg theo {date_from}/{date_to} giong nhu dv/bh.
+--     - v1.7.3 [2026-03-27]: [FIX E018] Doi separator MaChiTieuBK tu '_' thanh ':'
+--                            de dong nhat voi CLAUDE.md Section 7.1 va MaBenhNhanBK
+--
+
+
+-- ============================================================
+-- KHAI BAO THAM SỐ (chỉnh sửa theo môi trường thực tế)
+-- ============================================================
+DECLARE @NguonDuLieuKey INT     = {nguon_dulieu_key};
+DECLARE @CoSoKey        INT     = {coso_key};
+DECLARE @MaCoSo         NVARCHAR(50) = '{ma_co_so}';
+
+-- FIX E010 v1.6.0: {date_from} va {date_to} la string placeholder
+-- duoc thay the truc tiep trong Python _substitute_params() truoc khi tach GO batch
+-- Vi du: {date_from} = '2026-03-10', {date_to} = '2026-03-10'
+-- KHONG dung @DateFrom/@DateTo vi no bi mat scope khi GO tach batch
+
+-- ============================================================
+-- MERGE 3-IN-1: ThuPhiDichVu (DV) + ThuPhiBaoHiem (BH) + ThuPhiTangGiam (điều chỉnh)
+-- ============================================================
+MERGE [dm].[FactThuPhiDichVu] AS target
+USING (
+
+    -- --------------------------------------------------------
+    -- NGUỒN 1: ThuPhiDichVu (Dịch vụ) - LEFT JOIN với ThuPhiTangGiam
+    -- LoaiHinh = 'DV'
+    -- FIX v1.7.2: Doc NguonDuLieuKey/CoSoKey tu staging (da enriched),
+    --              khong dung gia tri tham so (vi enrichment da xay ra o Step 2)
+    -- --------------------------------------------------------
+    SELECT
+        ISNULL(dv.NguonDuLieuKey, @NguonDuLieuKey) AS NguonDuLieuKey,
+        ISNULL(dv.CoSoKey, @CoSoKey)                AS CoSoKey,
+        ISNULL(dv.MaCoSo, @MaCoSo)                 AS MaCoSo,
+        dv.MaThuPhi,
+        dv.MaPhieuDichVu,
+        dv.MaHoSo,
+        dv.MaChiTieu,
+        -- FIX v1.7.3 E018: MaChiTieuBK = NguonDuLieuKey (da enriched) + ':' + MaChiTieu
+        -- (Doi tu '_' thanh ':' de dong nhat voi CLAUDE.md Section 7.1)
+        CAST(ISNULL(dv.NguonDuLieuKey, @NguonDuLieuKey) AS VARCHAR(10)) + ':' + dv.MaChiTieu AS MaChiTieuBK,
+        dv.NgayDenKham,
+        dv.NgayVaoMay                               AS NgayDoanhThu,
+
+        -- DateKey: tính từ NgayDoanhThu theo công thức YYYYMMDD
+        ISNULL(
+            CAST(YEAR(dv.NgayVaoMay) * 10000
+                 + MONTH(dv.NgayVaoMay) * 100
+                 + DAY(dv.NgayVaoMay) AS INT),
+            CAST(YEAR(dv.NgayDenKham) * 10000
+                 + MONTH(dv.NgayDenKham) * 100
+                 + DAY(dv.NgayDenKham) AS INT)
+        )                                           AS DateKey,
+
+        -- SoLuongChuan: ưu tiên SoLuongThucHien, fallback SoLuong, default 1
+        COALESCE(dv.SoLuongThucHien, dv.SoLuong, 1) AS SoLuongChuan,
+
+        -- TongTien: giá trị gốc từ ThuPhiDichVu
+        dv.TongTien                                 AS TongTien,
+
+        -- FIX v1.8.0 E020: TongTienSauTangGiam - dung tg_agg (SUM aggregation)
+        -- ThuPhiTangGiam co the co nhieu dong cung khoa -> aggregate SUM truoc khi JOIN
+        -- Cong thuc: TongTien - TongGiam + TongTang
+        dv.TongTien - ISNULL(tg_agg.TongGiam, 0) + ISNULL(tg_agg.TongTang, 0) AS TongTienSauTangGiam,
+
+        -- LoaiHinh = 'DV' cho dịch vụ thường
+        'DV'                                        AS LoaiHinh,
+
+        dv.SoHoaDon,
+        dv.DaThucHien,
+        dv.TrangThaiPhieu
+
+    -- FIX v1.8.0 E020: Pre-aggregate ThuPhiTangGiam bang subquery de tranh nhan ban
+    -- Nếu cùng MaHoSo+MaChiTieu+MaPhieuDichVu có N dòng TG -> SUM(N) = TongGiam
+    -- FIX E021 v1.9.1: THEM date filter vao tg_agg de chi aggregate dung ngay.
+    -- Root cause: Khong co date filter -> tg_agg tong hop NHIEU THANG, khi merge
+    -- ngay cuoi cung (01/04), TatCaTangGiam = SUM TatCa -> bi sai thanh 0.
+    FROM [{staging_schema}].[ThuPhiDichVu] dv WITH (NOLOCK)
+    LEFT JOIN (
+        SELECT
+            MaHoSo,
+            MaChiTieu,
+            MaPhieuDichVu,
+            SUM(SoTienGiam) AS TongGiam,
+            SUM(SoTienTang) AS TongTang
+        FROM [{staging_schema}].[ThuPhiTangGiam] WITH (NOLOCK)
+        WHERE DaDongTien = 1
+          -- E021: LOC THEO NGAY - chi aggregate nhung dong trong date range hien tai
+          AND CAST(NgayDenKham AS DATE) >= CAST('{date_from}' AS DATE)
+          AND CAST(NgayDenKham AS DATE) <= CAST('{date_to}' AS DATE)
+        GROUP BY MaHoSo, MaChiTieu, MaPhieuDichVu
+    ) AS tg_agg
+        ON dv.MaHoSo         = tg_agg.MaHoSo
+        AND dv.MaChiTieu     = tg_agg.MaChiTieu
+        AND dv.MaPhieuDichVu = tg_agg.MaPhieuDichVu
+    WHERE dv.DaDongTien = 1
+        AND dv.MaChiTieu IS NOT NULL
+        AND LTRIM(RTRIM(dv.MaChiTieu)) <> ''
+        -- FIX E010 v1.6.0: Dung embedded string thay vi @DateFrom/@DateTo (bi mat scope)
+        AND CAST(dv.NgayDenKham AS DATE) >= CAST('{date_from}' AS DATE)
+        AND CAST(dv.NgayDenKham AS DATE) <= CAST('{date_to}' AS DATE)
+
+    UNION ALL
+
+    -- --------------------------------------------------------
+    -- NGUỒN 2: ThuPhiBaoHiem (Bảo hiểm)
+    -- LoaiHinh = 'BH'
+    -- FIX v1.7.2: Doc NguonDuLieuKey/CoSoKey tu staging (da enriched)
+    -- --------------------------------------------------------
+    SELECT
+        ISNULL(bh.NguonDuLieuKey, @NguonDuLieuKey) AS NguonDuLieuKey,
+        ISNULL(bh.CoSoKey, @CoSoKey)                AS CoSoKey,
+        ISNULL(bh.MaCoSo, @MaCoSo)                AS MaCoSo,
+        bh.MaThuPhi,
+        bh.MaPhieuDichVu,
+        bh.MaHoSo,
+        bh.MaChiTieu,
+        -- MaChiTieuBK = NguonDuLieuKey (da enriched) + ':' + MaChiTieu
+        -- FIX E018 v1.7.3: Doi tu '_' thanh ':'
+        CAST(ISNULL(bh.NguonDuLieuKey, @NguonDuLieuKey) AS VARCHAR(10)) + ':' + bh.MaChiTieu AS MaChiTieuBK,
+        bh.NgayDenKham,
+        bh.NgayVaoMay                               AS NgayDoanhThu,
+
+        -- DateKey: tính từ NgayDoanhThu
+        ISNULL(
+            CAST(YEAR(bh.NgayVaoMay) * 10000
+                 + MONTH(bh.NgayVaoMay) * 100
+                 + DAY(bh.NgayVaoMay) AS INT),
+            CAST(YEAR(bh.NgayDenKham) * 10000
+                 + MONTH(bh.NgayDenKham) * 100
+                 + DAY(bh.NgayDenKham) AS INT)
+        )                                           AS DateKey,
+
+        -- SoLuongChuan
+        COALESCE(bh.SoLuongThucHien, bh.SoLuong, 1) AS SoLuongChuan,
+
+        -- TongTien: giá trị gốc từ ThuPhiBaoHiem
+        bh.TongTien                                 AS TongTien,
+
+        -- FIX v1.7.0: TongTienSauTangGiam - cong thuc truc tiep
+        -- BH khong co bang ThuPhiTangGiam -> TienChenhLech la adjustments
+        bh.TongTien + ISNULL(bh.TienChenhLech, 0)  AS TongTienSauTangGiam,
+
+        -- LoaiHinh = 'BH' cho bảo hiểm
+        'BH'                                        AS LoaiHinh,
+
+        bh.SoHoaDon,
+        NULL                                        AS DaThucHien,   -- BH không có cột này
+        bh.TrangThaiPhieu
+
+    FROM [{staging_schema}].[ThuPhiBaoHiem] bh WITH (NOLOCK)
+    WHERE bh.DaDongTien = 1
+        AND bh.MaChiTieu IS NOT NULL
+        AND LTRIM(RTRIM(bh.MaChiTieu)) <> ''
+        -- FIX E010 v1.6.0: Dung embedded string thay vi @DateFrom/@DateTo (bi mat scope)
+        AND CAST(bh.NgayDenKham AS DATE) >= CAST('{date_from}' AS DATE)
+        AND CAST(bh.NgayDenKham AS DATE) <= CAST('{date_to}' AS DATE)
+
+) AS source
+
+-- ============================================================
+-- ĐIỀU KIỆN MATCH: khóa tự nhiên của Fact (4 cột gốc)
+-- FIX v1.7.1: LOẠI BỎ MaChiTieuBK khỏi ON clause
+--             MaChiTieuBK chỉ là data column, không phải business key.
+--             Dùng MaChiTieuBK trong INSERT để populate cho record mới.
+--             Lookup DichVuKey dùng MaChiTieuBK để đảm bảo consistency.
+-- ============================================================
+ON  target.NguonDuLieuKey = source.NguonDuLieuKey
+AND target.CoSoKey        = source.CoSoKey
+AND target.MaHoSo         = source.MaHoSo
+AND target.MaChiTieu      = source.MaChiTieu
+AND target.MaPhieuDichVu  = source.MaPhieuDichVu
+-- MaChiTieuBK: KHÔNG đưa vào ON vì:
+--   1. Target NULL + Source NOT NULL = không match → INSERT thất bại vì duplicate
+--   2. MaChiTieuBK chỉ là computed data, không phải identity key
+
+-- ============================================================
+-- WHEN MATCHED: Cập nhật các cột dữ liệu
+-- ============================================================
+WHEN MATCHED THEN
+    UPDATE SET
+        target.TongTien             = source.TongTien,
+        target.TongTienSauTangGiam  = source.TongTienSauTangGiam,
+        target.LoaiHinh             = source.LoaiHinh,
+        target.SoHoaDon             = source.SoHoaDon,
+        target.SoLuong              = source.SoLuongChuan,
+        target.DoanhThu             = ISNULL(CAST(source.TongTienSauTangGiam AS FLOAT), 0),
+        target.DaThucHien           = source.DaThucHien,
+        target.TrangThaiPhieu       = source.TrangThaiPhieu,
+        target.NgayDenKham          = source.NgayDenKham
+
+-- ============================================================
+-- WHEN NOT MATCHED: Insert bản ghi mới
+-- ============================================================
+WHEN NOT MATCHED BY TARGET THEN
+    INSERT (
+        NguonDuLieuKey,
+        CoSoKey,
+        DateKey,
+        LuotKhamKey,
+        BenhNhanKey,
+        DichVuKey,
+        MaCoSo,
+        MaThuPhi,
+        MaPhieuDichVu,
+        MaHoSo,
+        MaChiTieu,
+        MaChiTieuBK,
+        NgayDenKham,
+        SoLuong,
+        TongTien,
+        TongTienSauTangGiam,
+        LoaiHinh,
+        SoHoaDon,
+        DoanhThu,
+        DaThucHien,
+        TrangThaiPhieu
+    )
+    VALUES (
+        source.NguonDuLieuKey,
+        source.CoSoKey,
+
+        -- DateKey: YYYYMMDD
+        source.DateKey,
+
+        -- LuotKhamKey: lookup từ dm.DimLuotKham theo MaHoSo + NguonDuLieuKey
+        ISNULL((
+            SELECT TOP 1 lk.LuotKhamKey
+            FROM dm.DimLuotKham lk WITH (NOLOCK)
+            WHERE lk.NguonDuLieuKey = source.NguonDuLieuKey
+              AND lk.MaHoSo         = source.MaHoSo
+        ), 0),
+
+        -- BenhNhanKey: lookup từ dm.DimLuotKham (nullable)
+        (
+            SELECT TOP 1 lk.BenhNhanKey
+            FROM dm.DimLuotKham lk WITH (NOLOCK)
+            WHERE lk.NguonDuLieuKey = source.NguonDuLieuKey
+              AND lk.MaHoSo         = source.MaHoSo
+        ),
+
+        -- FIX v1.7.0: DichVuKey - lookup qua MaChiTieuBK (Business Key bat bien)
+        -- Neu DimDichVu chua co MaChiTieuBK, fallback ve lookup qua MaChiTieu
+        ISNULL((
+            SELECT TOP 1 dv2.DichVuKey
+            FROM dm.DimDichVu dv2 WITH (NOLOCK)
+            WHERE dv2.MaChiTieuBK = source.MaChiTieuBK
+        ), ISNULL((
+            SELECT TOP 1 dv3.DichVuKey
+            FROM dm.DimDichVu dv3 WITH (NOLOCK)
+            WHERE dv3.NguonDuLieuKey = source.NguonDuLieuKey
+              AND dv3.MaChiTieu      = source.MaChiTieu
+        ), 0)),
+
+        source.MaCoSo,
+        source.MaThuPhi,
+        source.MaPhieuDichVu,
+        source.MaHoSo,
+        source.MaChiTieu,
+        source.MaChiTieuBK,
+        source.NgayDenKham,
+        source.SoLuongChuan,
+        source.TongTien,
+        source.TongTienSauTangGiam,
+        source.LoaiHinh,
+        source.SoHoaDon,
+        ISNULL(CAST(source.TongTienSauTangGiam AS FLOAT), 0),  -- DoanhThu = TongTienSauTangGiam
+        source.DaThucHien,
+        source.TrangThaiPhieu
+    );
+GO
+
+-- ============================================================
+-- THỐNG KÊ SAU KHI MERGE
+-- ============================================================
+-- FIX E010 v1.6.0: Dung embedded string thay vi @DateFrom/@DateTo (bi mat scope)
+SELECT
+    LoaiHinh,
+    COUNT(*)                    AS SoBanGhi,
+    SUM(TongTien)               AS TongTien,
+    SUM(TongTienSauTangGiam)    AS TongTienSauTangGiam,
+    SUM(DoanhThu)               AS TongDoanhThu
+FROM [dm].[FactThuPhiDichVu]
+WHERE NgayDenKham >= CAST('{date_from}' AS DATE)
+  AND NgayDenKham <  DATEADD(DAY, 1, CAST('{date_to}' AS DATE))
+GROUP BY LoaiHinh
+ORDER BY LoaiHinh;
+GO
+```
+
+### SOURCE: src/jobs/__init__.py
+```py
+from src.jobs.dimension_loader import DimensionLoader
+from src.jobs.fact_loader import FactLoader
+from src.jobs.sync_orchestrator import SyncOrchestrator
+
+__all__ = [
+    "DimensionLoader",
+    "FactLoader",
+    "SyncOrchestrator",
+]
+```
+
+### SOURCE: src/jobs/dimension_loader.py
+```py
+from __future__ import annotations
+
+import os
+import subprocess
+import tempfile
+from dataclasses import dataclass
+from datetime import date
+from pathlib import Path
+from typing import Any
+
+import pyodbc
+
+from src.core.base_loader import BaseLoader
+
+
+@dataclass(frozen=True)
+class DimensionTableSpec:
+    name: str
+    source_tables: tuple[str, ...]
+    merge_sql_path: str
+
+
+class DimensionLoader(BaseLoader):
+    DEFAULT_DIMENSION_SPECS: tuple[DimensionTableSpec, ...] = (
+        DimensionTableSpec(
+            name="dim_dich_vu",
+            source_tables=("DMLoaiDichVu", "DMDichVu", "DMDichVuChiTiet"),
+            merge_sql_path="src/db/templates/sql/dimension/dim_dich_vu_merge.sql",
+        ),
+        DimensionTableSpec(
+            name="dim_benh",
+            source_tables=("DMBenh",),
+            merge_sql_path="src/db/templates/sql/dimension/DimBenh_merge.sql",
+        ),
+        DimensionTableSpec(
+            name="dim_benh_nhan",
+            source_tables=("DMBenhNhan",),
+            merge_sql_path="src/db/templates/sql/dimension/DimBenhNhan_merge.sql",
+        ),
+        DimensionTableSpec(
+            name="dim_luot_kham",
+            source_tables=("HoSoKhamBenhNgoaiTru",),
+            merge_sql_path="src/db/templates/sql/fact/DimLuotKham_merge.sql",
+        ),
+    )
+
+    def __init__(
+        self,
+        datamart_connection: str,
+        production_connection: str,
+        facility_code: str,
+        facility_schema: str,
+        nguon_dulieu_key: int,
+        co_so_key: int,
+        dimension_specs: tuple[DimensionTableSpec, ...] | None = None,
+    ) -> None:
+        super().__init__(connection_string=datamart_connection, table_name=f"DimensionLoader:{facility_code}")
+        self.production_connection = production_connection
+        self.facility_code = facility_code
+        self.facility_schema = facility_schema
+        self.nguon_dulieu_key = nguon_dulieu_key
+        self.co_so_key = co_so_key
+        self.dimension_specs = dimension_specs or self.DEFAULT_DIMENSION_SPECS
+
+    @staticmethod
+    def _parse_connection_string(connection_string: str) -> dict[str, str]:
+        parsed: dict[str, str] = {}
+        for item in connection_string.split(";"):
+            if not item or "=" not in item:
+                continue
+            key, value = item.split("=", 1)
+            parsed[key.strip().upper()] = value.strip()
+        return parsed
+
+    @staticmethod
+    def _build_bcp_auth_args(conn_parts: dict[str, str]) -> list[str]:
+        if conn_parts.get("UID") and conn_parts.get("PWD"):
+            return ["-U", conn_parts["UID"], "-P", conn_parts["PWD"]]
+        return ["-T"]
+
+    def _run_bcp_queryout(self, query: str, output_file: str, prod_parts: dict[str, str]) -> None:
+        command = [
+            "bcp",
+            query,
+            "queryout",
+            output_file,
+            "-S",
+            prod_parts.get("SERVER", ""),
+            "-d",
+            prod_parts.get("DATABASE", ""),
+            *self._build_bcp_auth_args(prod_parts),
+            "-w",
+            "-t\t",
+            "-r\n",
+            "-q",
+        ]
+        self._log(f"BCP queryout: {' '.join(command)}")
+        subprocess.run(command, check=True, shell=False)
+
+    def _run_bcp_in(self, full_table_name: str, input_file: str, dm_parts: dict[str, str]) -> None:
+        command = [
+            "bcp",
+            full_table_name,
+            "in",
+            input_file,
+            "-S",
+            dm_parts.get("SERVER", ""),
+            "-d",
+            dm_parts.get("DATABASE", ""),
+            *self._build_bcp_auth_args(dm_parts),
+            "-w",
+            "-t\t",
+            "-r\n",
+            "-q",
+        ]
+        self._log(f"BCP in: {' '.join(command)}")
+        subprocess.run(command, check=True, shell=False)
+
+    def _truncate_table(self, connection: pyodbc.Connection, schema_name: str, table_name: str) -> None:
+        sql = f"TRUNCATE TABLE [{schema_name}].[{table_name}];"
+        self._log(f"TRUNCATE {schema_name}.{table_name}")
+        self.execute_sql_sync(connection, sql)
+
+    def _copy_prod_to_ods(self, connection: pyodbc.Connection, table_name: str) -> None:
+        prod_parts = self._parse_connection_string(self.production_connection)
+        dm_parts = self._parse_connection_string(self.connection_string)
+
+        query = f"SELECT * FROM dbo.{table_name} WITH (NOLOCK)"
+        full_target_table = f"{self.facility_schema}.{table_name}"
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".txt") as tmp_file:
+            temp_path = tmp_file.name
+
+        try:
+            self._run_bcp_queryout(query=query, output_file=temp_path, prod_parts=prod_parts)
+            self._run_bcp_in(full_table_name=full_target_table, input_file=temp_path, dm_parts=dm_parts)
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
+    def _render_merge_sql(self, merge_sql_path: str) -> str:
+        template = Path(merge_sql_path).read_text(encoding="utf-8")
+        return template.format(
+            dm_schema="dm",
+            staging_schema=self.facility_schema,
+            source_schema=self.facility_schema,
+            nguon_dulieu_key=self.nguon_dulieu_key,
+            ma_co_so=self.facility_code,
+            co_so_key=self.co_so_key,
+            date_from="1900-01-01",
+            date_to="2099-12-31",
+        )
+
+    def _execute_dimension_spec(self, connection: pyodbc.Connection, spec: DimensionTableSpec) -> None:
+        self._log(f"Bắt đầu FULL LOAD dimension: {spec.name}")
+
+        for source_table in spec.source_tables:
+            self._truncate_table(connection, self.facility_schema, source_table)
+            self._copy_prod_to_ods(connection, source_table)
+
+        merge_sql = self._render_merge_sql(spec.merge_sql_path)
+        self._log(f"MERGE ODS -> Datamart cho {spec.name}")
+        self.execute_sql_sync(connection, merge_sql)
+
+    def _execute_core(self, connection: pyodbc.Connection, *args: Any, **kwargs: Any) -> None:
+        _ = args
+        _ = kwargs
+        for spec in self.dimension_specs:
+            self._execute_dimension_spec(connection, spec)
+```
+
+### SOURCE: src/jobs/fact_loader.py
+```py
+from __future__ import annotations
+
+import os
+import subprocess
+import tempfile
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta
+from typing import Any
+
+import pyodbc
+
+from src.core.base_loader import BaseLoader
+
+
+@dataclass(frozen=True)
+class FactTableSpec:
+    table_name: str
+    key_columns: tuple[str, ...]
+    date_column: str
+
+
+class FactLoader(BaseLoader):
+    LANDING_SCHEMA = "stg_nano_v2"
+
+    FACT_SPECS: tuple[FactTableSpec, ...] = (
+        FactTableSpec(
+            table_name="ThuPhiDichVu",
+            key_columns=("MaHoSo", "MaChiTieu", "MaPhieuDichVu"),
+            date_column="NgayDenKham",
+        ),
+        FactTableSpec(
+            table_name="ThuPhiBaoHiem",
+            key_columns=("MaHoSo", "MaChiTieu", "MaPhieuDichVu"),
+            date_column="NgayDenKham",
+        ),
+        FactTableSpec(
+            table_name="ThuPhiTangGiam",
+            key_columns=("MaHoSo", "MaChiTieu", "MaPhieuDichVu"),
+            date_column="NgayDenKham",
+        ),
+    )
+
+    def __init__(
+        self,
+        datamart_connection: str,
+        production_connection: str,
+        facility_code: str,
+        facility_schema: str,
+        nguon_dulieu_key: int,
+        co_so_key: int,
+        lookback_days: int = 3,
+        batch_size: int = 10000,
+    ) -> None:
+        super().__init__(connection_string=datamart_connection, table_name=f"FactLoader:{facility_code}")
+        self.production_connection = production_connection
+        self.facility_code = facility_code
+        self.facility_schema = facility_schema
+        self.nguon_dulieu_key = nguon_dulieu_key
+        self.co_so_key = co_so_key
+        self.lookback_days = lookback_days
+        self.batch_size = batch_size
+
+    @staticmethod
+    def _parse_connection_string(connection_string: str) -> dict[str, str]:
+        parsed: dict[str, str] = {}
+        for item in connection_string.split(";"):
+            if not item or "=" not in item:
+                continue
+            key, value = item.split("=", 1)
+            parsed[key.strip().upper()] = value.strip()
+        return parsed
+
+    @staticmethod
+    def _build_bcp_auth_args(conn_parts: dict[str, str]) -> list[str]:
+        if conn_parts.get("UID") and conn_parts.get("PWD"):
+            return ["-U", conn_parts["UID"], "-P", conn_parts["PWD"]]
+        return ["-T"]
+
+    @staticmethod
+    def _normalize_date(value: Any, fallback: date) -> date:
+        if value is None:
+            return fallback
+        if isinstance(value, datetime):
+            return value.date()
+        if isinstance(value, date):
+            return value
+        if isinstance(value, str):
+            return datetime.strptime(value, "%Y-%m-%d").date()
+        raise ValueError(f"Không parse được ngày từ giá trị: {value}")
+
+    def _truncate_table(self, connection: pyodbc.Connection, schema_name: str, table_name: str) -> None:
+        sql = f"TRUNCATE TABLE [{schema_name}].[{table_name}];"
+        self._log(f"TRUNCATE {schema_name}.{table_name}")
+        self.execute_sql_sync(connection, sql)
+
+    def _landing_cleanup(self, connection: pyodbc.Connection) -> None:
+        for spec in self.FACT_SPECS:
+            self._truncate_table(connection, self.LANDING_SCHEMA, spec.table_name)
+
+    def _run_bcp_queryout(self, query: str, output_file: str, prod_parts: dict[str, str]) -> None:
+        command = [
+            "bcp",
+            query,
+            "queryout",
+            output_file,
+            "-S",
+            prod_parts.get("SERVER", ""),
+            "-d",
+            prod_parts.get("DATABASE", ""),
+            *self._build_bcp_auth_args(prod_parts),
+            "-w",
+            "-t\t",
+            "-r\n",
+            "-q",
+        ]
+        self._log(f"BCP queryout: {' '.join(command)}")
+        subprocess.run(command, check=True, shell=False)
+
+    def _run_bcp_in(self, full_table_name: str, input_file: str, dm_parts: dict[str, str]) -> None:
+        command = [
+            "bcp",
+            full_table_name,
+            "in",
+            input_file,
+            "-S",
+            dm_parts.get("SERVER", ""),
+            "-d",
+            dm_parts.get("DATABASE", ""),
+            *self._build_bcp_auth_args(dm_parts),
+            "-w",
+            "-t\t",
+            "-r\n",
+            "-q",
+        ]
+        self._log(f"BCP in: {' '.join(command)}")
+        subprocess.run(command, check=True, shell=False)
+
+    def _copy_delta_prod_to_landing(
+        self,
+        connection: pyodbc.Connection,
+        spec: FactTableSpec,
+        lookback_date: date,
+        to_date: date,
+    ) -> None:
+        self._truncate_table(connection, self.LANDING_SCHEMA, spec.table_name)
+
+        prod_parts = self._parse_connection_string(self.production_connection)
+        dm_parts = self._parse_connection_string(self.connection_string)
+
+        query = (
+            f"SELECT * FROM dbo.{spec.table_name} WITH (NOLOCK) "
+            f"WHERE CAST({spec.date_column} AS DATE) >= '{lookback_date:%Y-%m-%d}' "
+            f"AND CAST({spec.date_column} AS DATE) <= '{to_date:%Y-%m-%d}'"
+        )
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".txt") as tmp_file:
+            temp_path = tmp_file.name
+
+        try:
+            self._run_bcp_queryout(query=query, output_file=temp_path, prod_parts=prod_parts)
+            self._run_bcp_in(
+                full_table_name=f"{self.LANDING_SCHEMA}.{spec.table_name}",
+                input_file=temp_path,
+                dm_parts=dm_parts,
+            )
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
+    def _get_common_columns(
+        self,
+        connection: pyodbc.Connection,
+        source_schema: str,
+        source_table: str,
+        target_schema: str,
+        target_table: str,
+    ) -> list[str]:
+        sql = """
+            SELECT s.COLUMN_NAME
+            FROM INFORMATION_SCHEMA.COLUMNS s
+            INNER JOIN INFORMATION_SCHEMA.COLUMNS t
+                ON s.COLUMN_NAME = t.COLUMN_NAME
+               AND t.TABLE_SCHEMA = ?
+               AND t.TABLE_NAME = ?
+            WHERE s.TABLE_SCHEMA = ?
+              AND s.TABLE_NAME = ?
+            ORDER BY s.ORDINAL_POSITION;
+        """
+        cursor = connection.cursor()
+        cursor.execute(sql, target_schema, target_table, source_schema, source_table)
+        return [row[0] for row in cursor.fetchall()]
+
+    def _build_ods_merge_sql(self, spec: FactTableSpec, common_columns: list[str], lookback_date: date, to_date: date) -> str:
+        if not common_columns:
+            raise ValueError(f"Không tìm thấy cột chung để MERGE ODS cho bảng {spec.table_name}")
+
+        key_columns = [column for column in spec.key_columns if column in common_columns]
+        if not key_columns:
+            raise ValueError(f"Không đủ cột khóa cho MERGE ODS ở bảng {spec.table_name}")
+
+        update_columns = [
+            column
+            for column in common_columns
+            if column not in key_columns and column.lower() not in {"createdat", "created_at", "ngaytao"}
+        ]
+
+        on_clause = " AND ".join([f"Target.[{column}] = Source.[{column}]" for column in key_columns])
+        update_clause = ",\n                ".join([f"Target.[{column}] = Source.[{column}]" for column in update_columns])
+        insert_columns = ", ".join([f"[{column}]" for column in common_columns])
+        insert_values = ", ".join([f"Source.[{column}]" for column in common_columns])
+
+        return f"""
+            MERGE [{self.facility_schema}].[{spec.table_name}] AS Target
+            USING [{self.LANDING_SCHEMA}].[{spec.table_name}] AS Source
+                ON {on_clause}
+            WHEN MATCHED THEN
+                UPDATE SET
+                {update_clause}
+            WHEN NOT MATCHED BY TARGET THEN
+                INSERT ({insert_columns})
+                VALUES ({insert_values})
+            WHEN NOT MATCHED BY SOURCE
+                 AND CAST(Target.[{spec.date_column}] AS DATE) >= CAST('{lookback_date:%Y-%m-%d}' AS DATE)
+                 AND CAST(Target.[{spec.date_column}] AS DATE) <= CAST('{to_date:%Y-%m-%d}' AS DATE)
+            THEN DELETE;
+        """
+
+    def _merge_landing_to_ods(self, connection: pyodbc.Connection, spec: FactTableSpec, lookback_date: date, to_date: date) -> None:
+        common_columns = self._get_common_columns(
+            connection=connection,
+            source_schema=self.LANDING_SCHEMA,
+            source_table=spec.table_name,
+            target_schema=self.facility_schema,
+            target_table=spec.table_name,
+        )
+        merge_sql = self._build_ods_merge_sql(spec, common_columns, lookback_date, to_date)
+        self._log(f"MERGE Landing -> ODS cho {spec.table_name}")
+        self.execute_sql_sync(connection, merge_sql)
+
+    def _build_fact_merge_batch_sql(self, lookback_date: date, to_date: date) -> str:
+        return f"""
+            ;WITH src_full AS (
+                SELECT
+                    {self.nguon_dulieu_key} AS NguonDuLieuKey,
+                    {self.co_so_key} AS CoSoKey,
+                    '{self.facility_code}' AS MaCoSo,
+                    dv.MaThuPhi,
+                    dv.MaPhieuDichVu,
+                    dv.MaHoSo,
+                    dv.MaChiTieu,
+                    CAST({self.nguon_dulieu_key} AS VARCHAR(10)) + ':' + dv.MaChiTieu AS MaChiTieuBK,
+                    dv.NgayDenKham,
+                    dv.NgayVaoMay AS NgayDoanhThu,
+                    ISNULL(
+                        CAST(YEAR(dv.NgayVaoMay) * 10000 + MONTH(dv.NgayVaoMay) * 100 + DAY(dv.NgayVaoMay) AS INT),
+                        CAST(YEAR(dv.NgayDenKham) * 10000 + MONTH(dv.NgayDenKham) * 100 + DAY(dv.NgayDenKham) AS INT)
+                    ) AS DateKey,
+                    COALESCE(dv.SoLuongThucHien, dv.SoLuong, 1) AS SoLuongChuan,
+                    dv.TongTien AS TongTien,
+                    dv.TongTien - ISNULL(tg_agg.TongGiam, 0) + ISNULL(tg_agg.TongTang, 0) AS TongTienSauTangGiam,
+                    'DV' AS LoaiHinh,
+                    dv.SoHoaDon,
+                    dv.DaThucHien,
+                    dv.TrangThaiPhieu
+                FROM [{self.facility_schema}].[ThuPhiDichVu] dv WITH (NOLOCK)
+                LEFT JOIN (
+                    SELECT
+                        MaHoSo,
+                        MaChiTieu,
+                        MaPhieuDichVu,
+                        SUM(SoTienGiam) AS TongGiam,
+                        SUM(SoTienTang) AS TongTang
+                    FROM [{self.facility_schema}].[ThuPhiTangGiam] WITH (NOLOCK)
+                    WHERE DaDongTien = 1
+                      AND CAST(NgayDenKham AS DATE) >= CAST('{lookback_date:%Y-%m-%d}' AS DATE)
+                      AND CAST(NgayDenKham AS DATE) <= CAST('{to_date:%Y-%m-%d}' AS DATE)
+                    GROUP BY MaHoSo, MaChiTieu, MaPhieuDichVu
+                ) tg_agg
+                    ON dv.MaHoSo = tg_agg.MaHoSo
+                   AND dv.MaChiTieu = tg_agg.MaChiTieu
+                   AND dv.MaPhieuDichVu = tg_agg.MaPhieuDichVu
+                WHERE dv.DaDongTien = 1
+                  AND dv.MaChiTieu IS NOT NULL
+                  AND LTRIM(RTRIM(dv.MaChiTieu)) <> ''
+                  AND CAST(dv.NgayDenKham AS DATE) >= CAST('{lookback_date:%Y-%m-%d}' AS DATE)
+                  AND CAST(dv.NgayDenKham AS DATE) <= CAST('{to_date:%Y-%m-%d}' AS DATE)
+
+                UNION ALL
+
+                SELECT
+                    {self.nguon_dulieu_key} AS NguonDuLieuKey,
+                    {self.co_so_key} AS CoSoKey,
+                    '{self.facility_code}' AS MaCoSo,
+                    bh.MaThuPhi,
+                    bh.MaPhieuDichVu,
+                    bh.MaHoSo,
+                    bh.MaChiTieu,
+                    CAST({self.nguon_dulieu_key} AS VARCHAR(10)) + ':' + bh.MaChiTieu AS MaChiTieuBK,
+                    bh.NgayDenKham,
+                    bh.NgayVaoMay AS NgayDoanhThu,
+                    ISNULL(
+                        CAST(YEAR(bh.NgayVaoMay) * 10000 + MONTH(bh.NgayVaoMay) * 100 + DAY(bh.NgayVaoMay) AS INT),
+                        CAST(YEAR(bh.NgayDenKham) * 10000 + MONTH(bh.NgayDenKham) * 100 + DAY(bh.NgayDenKham) AS INT)
+                    ) AS DateKey,
+                    COALESCE(bh.SoLuongThucHien, bh.SoLuong, 1) AS SoLuongChuan,
+                    bh.TongTien AS TongTien,
+                    bh.TongTien + ISNULL(bh.TienChenhLech, 0) AS TongTienSauTangGiam,
+                    'BH' AS LoaiHinh,
+                    bh.SoHoaDon,
+                    NULL AS DaThucHien,
+                    bh.TrangThaiPhieu
+                FROM [{self.facility_schema}].[ThuPhiBaoHiem] bh WITH (NOLOCK)
+                WHERE bh.DaDongTien = 1
+                  AND bh.MaChiTieu IS NOT NULL
+                  AND LTRIM(RTRIM(bh.MaChiTieu)) <> ''
+                  AND CAST(bh.NgayDenKham AS DATE) >= CAST('{lookback_date:%Y-%m-%d}' AS DATE)
+                  AND CAST(bh.NgayDenKham AS DATE) <= CAST('{to_date:%Y-%m-%d}' AS DATE)
+            ),
+            src_batch AS (
+                SELECT TOP ({self.batch_size}) *
+                FROM src_full
+                ORDER BY DateKey, MaHoSo, MaChiTieu, MaPhieuDichVu
+            )
+            MERGE [dm].[FactThuPhiDichVu] AS Target
+            USING src_batch AS Source
+            ON  Target.NguonDuLieuKey = Source.NguonDuLieuKey
+            AND Target.CoSoKey        = Source.CoSoKey
+            AND Target.MaHoSo         = Source.MaHoSo
+            AND Target.MaChiTieu      = Source.MaChiTieu
+            AND Target.MaPhieuDichVu  = Source.MaPhieuDichVu
+            WHEN MATCHED THEN
+                UPDATE SET
+                    Target.TongTien            = Source.TongTien,
+                    Target.TongTienSauTangGiam = Source.TongTienSauTangGiam,
+                    Target.LoaiHinh            = Source.LoaiHinh,
+                    Target.SoHoaDon            = Source.SoHoaDon,
+                    Target.SoLuong             = Source.SoLuongChuan,
+                    Target.DoanhThu            = ISNULL(CAST(Source.TongTienSauTangGiam AS FLOAT), 0),
+                    Target.DaThucHien          = Source.DaThucHien,
+                    Target.TrangThaiPhieu      = Source.TrangThaiPhieu,
+                    Target.NgayDenKham         = Source.NgayDenKham
+            WHEN NOT MATCHED BY TARGET THEN
+                INSERT (
+                    NguonDuLieuKey,
+                    CoSoKey,
+                    DateKey,
+                    LuotKhamKey,
+                    BenhNhanKey,
+                    DichVuKey,
+                    MaCoSo,
+                    MaThuPhi,
+                    MaPhieuDichVu,
+                    MaHoSo,
+                    MaChiTieu,
+                    MaChiTieuBK,
+                    NgayDenKham,
+                    SoLuong,
+                    TongTien,
+                    TongTienSauTangGiam,
+                    LoaiHinh,
+                    SoHoaDon,
+                    DoanhThu,
+                    DaThucHien,
+                    TrangThaiPhieu
+                )
+                VALUES (
+                    Source.NguonDuLieuKey,
+                    Source.CoSoKey,
+                    Source.DateKey,
+                    ISNULL((
+                        SELECT TOP 1 lk.LuotKhamKey
+                        FROM dm.DimLuotKham lk WITH (NOLOCK)
+                        WHERE lk.NguonDuLieuKey = Source.NguonDuLieuKey
+                          AND lk.MaHoSo = Source.MaHoSo
+                    ), -1),
+                    ISNULL((
+                        SELECT TOP 1 lk.BenhNhanKey
+                        FROM dm.DimLuotKham lk WITH (NOLOCK)
+                        WHERE lk.NguonDuLieuKey = Source.NguonDuLieuKey
+                          AND lk.MaHoSo = Source.MaHoSo
+                    ), -1),
+                    ISNULL((
+                        SELECT TOP 1 dv2.DichVuKey
+                        FROM dm.DimDichVu dv2 WITH (NOLOCK)
+                        WHERE dv2.MaChiTieuBK = Source.MaChiTieuBK
+                    ), ISNULL((
+                        SELECT TOP 1 dv3.DichVuKey
+                        FROM dm.DimDichVu dv3 WITH (NOLOCK)
+                        WHERE dv3.NguonDuLieuKey = Source.NguonDuLieuKey
+                          AND dv3.MaChiTieu = Source.MaChiTieu
+                    ), -1)),
+                    Source.MaCoSo,
+                    Source.MaThuPhi,
+                    Source.MaPhieuDichVu,
+                    Source.MaHoSo,
+                    Source.MaChiTieu,
+                    Source.MaChiTieuBK,
+                    Source.NgayDenKham,
+                    Source.SoLuongChuan,
+                    Source.TongTien,
+                    Source.TongTienSauTangGiam,
+                    Source.LoaiHinh,
+                    Source.SoHoaDon,
+                    ISNULL(CAST(Source.TongTienSauTangGiam AS FLOAT), 0),
+                    Source.DaThucHien,
+                    Source.TrangThaiPhieu
+                )
+            WHEN NOT MATCHED BY SOURCE
+                 AND CAST(Target.NgayDenKham AS DATE) >= CAST('{lookback_date:%Y-%m-%d}' AS DATE)
+                 AND CAST(Target.NgayDenKham AS DATE) <= CAST('{to_date:%Y-%m-%d}' AS DATE)
+                 AND Target.NguonDuLieuKey = {self.nguon_dulieu_key}
+                 AND Target.MaCoSo = '{self.facility_code}'
+            THEN DELETE;
+
+            SELECT @@ROWCOUNT AS MergeAffectedRows;
+        """
+
+    def _merge_ods_to_datamart_batches(self, connection: pyodbc.Connection, lookback_date: date, to_date: date) -> None:
+        self._log(
+            "MERGE ODS -> Datamart theo batch TOP "
+            f"{self.batch_size} cho khoảng {lookback_date} -> {to_date}"
+        )
+
+        max_loops = 500
+        for loop_idx in range(1, max_loops + 1):
+            sql = self._prepend_nocount(self._build_fact_merge_batch_sql(lookback_date, to_date))
+            cursor = connection.cursor()
+            cursor.execute(sql)
+            row = cursor.fetchone()
+            affected = int(row[0]) if row and row[0] is not None else 0
+            self._log(f"Batch {loop_idx}: affected = {affected}")
+
+            if affected == 0:
+                break
+            if affected < self.batch_size:
+                break
+        else:
+            raise RuntimeError("Vượt quá số vòng lặp batch tối đa khi MERGE FactThuPhiDichVu")
+
+    def _execute_core(self, connection: pyodbc.Connection, *args: Any, **kwargs: Any) -> None:
+        from_date_input = args[0] if len(args) > 0 else kwargs.get("from_date")
+        to_date_input = args[1] if len(args) > 1 else kwargs.get("to_date")
+
+        today = date.today()
+        to_date = self._normalize_date(to_date_input, fallback=today)
+        lookback_date = to_date - timedelta(days=self.lookback_days)
+        _from_date = self._normalize_date(from_date_input, fallback=lookback_date)
+
+        self._log(
+            f"Luồng incremental Fact theo Lookback D-{self.lookback_days}. "
+            f"to_date={to_date}, lookback_date={lookback_date}, from_date_input={_from_date}"
+        )
+
+        try:
+            self._log("Dọn Landing đầu luồng")
+            self._landing_cleanup(connection)
+
+            for spec in self.FACT_SPECS:
+                self._copy_delta_prod_to_landing(connection, spec, lookback_date, to_date)
+                self._merge_landing_to_ods(connection, spec, lookback_date, to_date)
+
+            self._merge_ods_to_datamart_batches(connection, lookback_date, to_date)
+        finally:
+            self._log("Dọn Landing cuối luồng")
+            self._landing_cleanup(connection)
+```
+
+### SOURCE: src/jobs/sync_orchestrator.py
+```py
+from __future__ import annotations
+
+import argparse
+import os
+from dataclasses import dataclass
+from datetime import date
+
+from dotenv import load_dotenv
+
+from src.jobs.dimension_loader import DimensionLoader
+from src.jobs.fact_loader import FactLoader
+
+
+@dataclass(frozen=True)
+class FacilityDefinition:
+    code: str
+    prod_env_key: str
+    schema_name: str
+    nguon_dulieu_env_key: str
+    co_so_env_key: str
+    default_nguon_dulieu_key: int
+    default_co_so_key: int
+
+
+class SyncOrchestrator:
+    def __init__(
+        self,
+        datamart_env_key: str = "DATAMART_CONNECTION_STRING",
+        active_facilities_env_key: str = "ACTIVE_FACILITIES",
+    ) -> None:
+        load_dotenv("config/.env", override=False)
+        self.datamart_env_key = datamart_env_key
+        self.active_facilities_env_key = active_facilities_env_key
+
+        self.facility_registry: dict[str, FacilityDefinition] = {
+            "hanoi": FacilityDefinition(
+                code="hanoi",
+                prod_env_key="PROD_CONNECTION_HANOI",
+                schema_name="hanoi_hisnano_v2",
+                nguon_dulieu_env_key="NGUON_DULIEU_KEY_HANOI",
+                co_so_env_key="CO_SO_KEY_HANOI",
+                default_nguon_dulieu_key=2,
+                default_co_so_key=1,
+            ),
+            "hcm": FacilityDefinition(
+                code="hcm",
+                prod_env_key="PROD_CONNECTION_HCM",
+                schema_name="hcm_hisnano_v2",
+                nguon_dulieu_env_key="NGUON_DULIEU_KEY_HCM",
+                co_so_env_key="CO_SO_KEY_HCM",
+                default_nguon_dulieu_key=3,
+                default_co_so_key=2,
+            ),
+            "halong": FacilityDefinition(
+                code="halong",
+                prod_env_key="PROD_CONNECTION_HALONG",
+                schema_name="halong_hisnano_v2",
+                nguon_dulieu_env_key="NGUON_DULIEU_KEY_HALONG",
+                co_so_env_key="CO_SO_KEY_HALONG",
+                default_nguon_dulieu_key=4,
+                default_co_so_key=3,
+            ),
+            "haiphong": FacilityDefinition(
+                code="haiphong",
+                prod_env_key="PROD_CONNECTION_HAIPHONG",
+                schema_name="haiphong_hisnano_v2",
+                nguon_dulieu_env_key="NGUON_DULIEU_KEY_HAIPHONG",
+                co_so_env_key="CO_SO_KEY_HAIPHONG",
+                default_nguon_dulieu_key=5,
+                default_co_so_key=4,
+            ),
+        }
+
+    @staticmethod
+    def _parse_facility_tokens(raw_value: str) -> list[str]:
+        return [token.strip().lower() for token in raw_value.split(",") if token.strip()]
+
+    def _resolve_target_facilities(self, target_facilities: list[str] | None = None) -> list[str]:
+        if target_facilities is not None:
+            normalized = [facility.strip().lower() for facility in target_facilities if facility.strip()]
+            if not normalized or "all" in normalized:
+                return list(self.facility_registry.keys())
+            return normalized
+
+        env_value = os.getenv(self.active_facilities_env_key, "ALL").strip()
+        if not env_value or env_value.upper() == "ALL":
+            return list(self.facility_registry.keys())
+        return self._parse_facility_tokens(env_value)
+
+    def _validate_target_facilities(self, facilities: list[str]) -> None:
+        unknown = [facility for facility in facilities if facility not in self.facility_registry]
+        if unknown:
+            valid = ", ".join(self.facility_registry.keys())
+            raise ValueError(f"Facility không hợp lệ: {unknown}. Danh sách hợp lệ: {valid}")
+
+    def _resolve_facility_key(self, env_key: str, fallback: int) -> int:
+        raw = os.getenv(env_key, "").strip()
+        if not raw:
+            return fallback
+        try:
+            return int(raw)
+        except ValueError as exc:
+            raise ValueError(f"Biến {env_key} phải là số nguyên, đang nhận '{raw}'") from exc
+
+    def _build_dimension_loader(
+        self,
+        datamart_connection: str,
+        production_connection: str,
+        facility: FacilityDefinition,
+        nguon_dulieu_key: int,
+        co_so_key: int,
+    ) -> DimensionLoader:
+        return DimensionLoader(
+            datamart_connection=datamart_connection,
+            production_connection=production_connection,
+            facility_code=facility.code,
+            facility_schema=facility.schema_name,
+            nguon_dulieu_key=nguon_dulieu_key,
+            co_so_key=co_so_key,
+        )
+
+    def _build_fact_loader(
+        self,
+        datamart_connection: str,
+        production_connection: str,
+        facility: FacilityDefinition,
+        nguon_dulieu_key: int,
+        co_so_key: int,
+    ) -> FactLoader:
+        return FactLoader(
+            datamart_connection=datamart_connection,
+            production_connection=production_connection,
+            facility_code=facility.code,
+            facility_schema=facility.schema_name,
+            nguon_dulieu_key=nguon_dulieu_key,
+            co_so_key=co_so_key,
+        )
+
+    def run(
+        self,
+        target_facilities: list[str] | None = None,
+        run_dimension: bool = True,
+        run_fact: bool = True,
+        to_date: date | None = None,
+    ) -> None:
+        if not run_dimension and not run_fact:
+            raise ValueError("Cần bật ít nhất một luồng: run_dimension hoặc run_fact")
+
+        datamart_connection = os.getenv(self.datamart_env_key, "").strip()
+        if not datamart_connection:
+            raise ValueError(f"Thiếu biến môi trường {self.datamart_env_key}")
+
+        selected_facilities = self._resolve_target_facilities(target_facilities)
+        self._validate_target_facilities(selected_facilities)
+
+        effective_to_date = to_date or date.today()
+        print(f"[SyncOrchestrator] Danh sách facility cần chạy: {selected_facilities}")
+
+        for facility_code in selected_facilities:
+            facility = self.facility_registry[facility_code]
+            production_connection = os.getenv(facility.prod_env_key, "").strip()
+            if not production_connection:
+                print(f"[SyncOrchestrator] Bỏ qua {facility.code} vì thiếu {facility.prod_env_key}")
+                continue
+
+            nguon_dulieu_key = self._resolve_facility_key(
+                facility.nguon_dulieu_env_key,
+                facility.default_nguon_dulieu_key,
+            )
+            co_so_key = self._resolve_facility_key(
+                facility.co_so_env_key,
+                facility.default_co_so_key,
+            )
+
+            print(f"[SyncOrchestrator] Bắt đầu facility={facility.code}")
+            try:
+                if run_dimension:
+                    dimension_loader = self._build_dimension_loader(
+                        datamart_connection=datamart_connection,
+                        production_connection=production_connection,
+                        facility=facility,
+                        nguon_dulieu_key=nguon_dulieu_key,
+                        co_so_key=co_so_key,
+                    )
+                    dimension_loader.execute_load(to_date=effective_to_date)
+
+                if run_fact:
+                    fact_loader = self._build_fact_loader(
+                        datamart_connection=datamart_connection,
+                        production_connection=production_connection,
+                        facility=facility,
+                        nguon_dulieu_key=nguon_dulieu_key,
+                        co_so_key=co_so_key,
+                    )
+                    fact_loader.execute_load(to_date=effective_to_date)
+
+                print(f"[SyncOrchestrator] Hoàn tất facility={facility.code}")
+            except Exception:
+                print(f"[SyncOrchestrator] Lỗi tại facility={facility.code}, dừng luồng tuần tự")
+                raise
+
+
+def _parse_cli_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Chạy đồng bộ ETL tuần tự theo facility")
+    parser.add_argument(
+        "--facilities",
+        type=str,
+        default="ALL",
+        help="Danh sách facility phân tách bởi dấu phẩy, ví dụ: hanoi,hcm hoặc ALL",
+    )
+    parser.add_argument(
+        "--only",
+        type=str,
+        choices=["dimension", "fact", "all"],
+        default="all",
+        help="Giới hạn luồng chạy",
+    )
+    return parser.parse_args()
+
+
+if __name__ == "__main__":
+    args = _parse_cli_args()
+    orchestrator = SyncOrchestrator()
+
+    run_dimension = args.only in {"dimension", "all"}
+    run_fact = args.only in {"fact", "all"}
+    target_facilities = None if args.facilities.upper() == "ALL" else [token.strip() for token in args.facilities.split(",")]
+
+    orchestrator.run(
+        target_facilities=target_facilities,
+        run_dimension=run_dimension,
+        run_fact=run_fact,
+    )
 ```

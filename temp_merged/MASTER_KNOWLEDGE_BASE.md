@@ -113,6 +113,36 @@
 ### ADR-05: Giao diện Multi-Grid All-in-one
 - **Quyết định**: Loại bỏ dropdown chọn từng bảng, chuyển sang hiển thị toàn bộ lưới đối chiếu động trên một màn hình theo thứ tự Dim trước, Fact sau.
 - **Lý do kiến trúc**: Tách bạch bản chất dữ liệu full-load của dimension và dữ liệu có lọc ngày của transactional/fact, đồng thời giữ tính đúng đắn của cột động theo từng domain mà không trộn nhiễu cấu trúc hiển thị.
+
+## 2026-05-18: Xây dựng khung đồng bộ ETL v1 (Sequential + Selective Sync)
+
+### ADR-06: Chuẩn hóa module điều phối tuần tự có chọn lọc cơ sở
+- **Quyết định**: Tạo `src/jobs/sync_orchestrator.py` với class `SyncOrchestrator` chạy tuần tự từng cơ sở, hỗ trợ lọc cơ sở chạy bằng `ACTIVE_FACILITIES` hoặc tham số `run(target_facilities=...)`.
+- **Lý do kiến trúc**: Tránh hardcode chạy chết toàn bộ cơ sở trong mọi phiên deploy, cho phép vận hành rollout theo từng cơ sở mục tiêu nhưng vẫn giữ nguyên nguyên tắc tuần tự để bảo vệ Landing dùng chung.
+
+### ADR-07: Chuẩn hóa luồng 2-Hop cho Dimension Full Load
+- **Quyết định**: Tạo `src/jobs/dimension_loader.py` (kế thừa `BaseLoader`) để chạy full-load theo 2 chặng:
+  1. Production -> ODS cơ sở (TRUNCATE + BCP `-w`).
+  2. ODS cơ sở -> Datamart (MERGE template theo domain).
+- **Lý do kiến trúc**: Tách rõ luồng danh mục với luồng phát sinh, giữ ODS theo từng cơ sở làm vùng ổn định trước khi đẩy Datamart.
+
+### ADR-08: Chuẩn hóa luồng 3-Hop cho Fact Incremental với Hard Delete an toàn
+- **Quyết định**: Tạo `src/jobs/fact_loader.py` (kế thừa `BaseLoader`) với luồng:
+  1. Prod -> Landing `stg_nano_v2` (TRUNCATE + BCP delta D-3).
+  2. Landing -> ODS cơ sở bằng MERGE có hard delete giới hạn thời gian D-3.
+  3. ODS cơ sở -> Datamart bằng MERGE batching `TOP (10000)`.
+- **Chốt chặn an toàn đã áp dụng**:
+  - Hard delete ở ODS có điều kiện thời gian: chỉ xóa trong cửa sổ `Lookback D-3` đến `to_date`.
+  - Hard delete ở Datamart có điều kiện kép: giới hạn D-3 và cô lập theo `NguonDuLieuKey` + `MaCoSo` để không xóa nhầm dữ liệu cơ sở khác.
+  - Điều kiện `ON` MERGE Datamart bắt buộc có `Target.NguonDuLieuKey = Source.NguonDuLieuKey` để cô lập business key đa cơ sở.
+  - Bảo vệ Landing: TRUNCATE ở đầu và cuối luồng (`finally`) để tránh rò rỉ dữ liệu giữa các phiên cơ sở.
+
+### ADR-09: Chuẩn hóa nghiệp vụ FactThuPhiDichVu 3-in-1 và Seed Data
+- **Quyết định**:
+  - Công thức DV: `TongTienSauTangGiam = TongTien - ISNULL(TongGiam, 0) + ISNULL(TongTang, 0)`.
+  - Công thức BH: `TongTienSauTangGiam = TongTien + ISNULL(TienChenhLech, 0)`.
+  - Early arriving facts dùng fallback seed key `-1` cho các khóa dimension (`LuotKhamKey`, `BenhNhanKey`, `DichVuKey`).
+- **Lý do kiến trúc**: Giữ tính nhất quán tài chính giữa ODS và Datamart, đồng thời bảo đảm fact không bị rớt bản ghi khi dimension đến trễ.
 ```
 
 ### SOURCE: README.md
@@ -228,6 +258,46 @@ ETL_Nano_Project_V2/
 ### SOURCE: docs/knowledge/GEM_AUTO_PIPELINE.md
 ```md
 # GEM_AUTO_PIPELINE.md
+
+## Mục tiêu
+- Chuẩn hóa engine tự động chạy ETL theo chiến lược tuần tự an toàn Landing.
+- Hỗ trợ vận hành chọn lọc cơ sở để phục vụ deploy theo pha.
+
+## Module điều phối
+- Tệp: `src/jobs/sync_orchestrator.py`
+- Lớp: `SyncOrchestrator`
+
+## Quy tắc điều phối bắt buộc
+1. Chạy tuần tự từng cơ sở, không chạy song song giữa các cơ sở.
+2. Cơ sở hiện tại phải hoàn tất toàn bộ Dimension + Fact + cleanup Landing trước khi sang cơ sở kế tiếp.
+3. Nếu có lỗi tại một cơ sở thì dừng luồng tuần tự để tránh lan lỗi.
+
+## Selective Sync
+- Hỗ trợ 2 cách chọn cơ sở chạy:
+  - Biến môi trường: `ACTIVE_FACILITIES=hanoi,hcm`
+  - Tham số hàm: `run(target_facilities=['hanoi'])`
+- Nếu không truyền hoặc nhận `ALL` thì chạy toàn bộ facility đã định nghĩa.
+- Facility ngoài scope không được khởi tạo connection.
+
+## Input connection chuẩn
+- Datamart: `DATAMART_CONNECTION_STRING`
+- Production theo cơ sở:
+  - `PROD_CONNECTION_HANOI`
+  - `PROD_CONNECTION_HCM`
+  - `PROD_CONNECTION_HALONG`
+  - `PROD_CONNECTION_HAIPHONG`
+
+## Luồng gọi loader
+- Dimension: `src/jobs/dimension_loader.py`
+- Fact: `src/jobs/fact_loader.py`
+- Trình tự gọi trong mỗi facility:
+  1. `DimensionLoader.execute_load(...)`
+  2. `FactLoader.execute_load(...)`
+
+## Chốt chặn vận hành
+- FactLoader luôn dọn Landing ở đầu và cuối luồng.
+- Hard delete incremental chỉ được áp dụng trong cửa sổ D-3 và đúng phạm vi cơ sở.
+- MERGE Fact lên Datamart bắt buộc cô lập theo `NguonDuLieuKey`.
 ```
 
 ### SOURCE: docs/knowledge/GEM_CODE_MAP.md
@@ -252,6 +322,29 @@ ETL_Nano_Project_V2/
   - `/src/jobs/`
   - `/src/db/templates/sql/`
 - File Master tương ứng: `MASTER_ETL_PROCESS.md`
+
+#### Bổ sung theo yêu cầu 20260518_0900_xay_dung_khung_dong_bo_v1
+- Module điều phối ETL tuần tự có hỗ trợ Selective Sync:
+  - `src/jobs/sync_orchestrator.py`
+  - Chức năng chính:
+    - Class `SyncOrchestrator` điều phối tuần tự theo facility.
+    - Hỗ trợ lọc cơ sở chạy bằng `ACTIVE_FACILITIES` hoặc tham số `run(target_facilities=...)`.
+    - Chỉ map/khởi tạo connection theo facility được chọn, bỏ qua facility ngoài scope.
+- Module nạp Dimension full load 2-Hop:
+  - `src/jobs/dimension_loader.py`
+  - Chức năng chính:
+    - Class `DimensionLoader` kế thừa `BaseLoader`.
+    - Luồng Production -> ODS cơ sở bằng `TRUNCATE` + BCP `-w`.
+    - Luồng ODS cơ sở -> Datamart bằng MERGE SQL template.
+- Module nạp Fact incremental 3-Hop:
+  - `src/jobs/fact_loader.py`
+  - Chức năng chính:
+    - Class `FactLoader` kế thừa `BaseLoader`.
+    - Luồng Prod -> Landing `stg_nano_v2` theo cửa sổ trượt D-3.
+    - Luồng Landing -> ODS bằng MERGE có hard delete giới hạn D-3.
+    - Luồng ODS -> Datamart bằng MERGE batching `TOP (10000)`.
+    - Áp dụng fallback seed key `-1` cho early arriving facts.
+    - Dọn Landing ở đầu và cuối luồng để chống rò rỉ dữ liệu giữa facilities.
 
 ### Nhóm INTERFACE
 - Phạm vi:
@@ -317,16 +410,137 @@ ETL_Nano_Project_V2/
 ### SOURCE: docs/knowledge/GEM_DATA_FLOW.md
 ```md
 # GEM_DATA_FLOW.md
+
+## Mục tiêu
+- Chuẩn hóa luồng nạp ETL theo mô hình đa chặng, tách riêng Dimension và Fact.
+- Bảo đảm đồng bộ vật lý theo cửa sổ trượt D-3 nhưng không xóa nhầm lịch sử ngoài phạm vi.
+
+## Luồng chuẩn cho Dimension (FULL LOAD - 2-Hop)
+1. **Production -> ODS cơ sở**
+   - Thực thi `TRUNCATE TABLE <facility_schema>.<TableName>`.
+   - Dùng `bcp -w` để nạp full dữ liệu từ Production sang ODS cơ sở.
+2. **ODS cơ sở -> Datamart**
+   - Thực thi MERGE SQL template theo từng domain dimension.
+
+## Luồng chuẩn cho Fact (INCREMENTAL - 3-Hop)
+1. **Prod -> Landing (`stg_nano_v2`)**
+   - TRUNCATE bảng Landing tương ứng.
+   - Nạp delta theo cửa sổ trượt `Lookback = D-3` bằng `bcp -w`.
+2. **Landing -> ODS cơ sở**
+   - MERGE từ `stg_nano_v2` sang `<facility_schema>`.
+   - Hard delete bắt buộc có chặn thời gian:
+     - `WHEN NOT MATCHED BY SOURCE`
+     - `AND Target.<NgayCol> BETWEEN @LookbackDate AND @ToDate`
+     - `THEN DELETE`.
+3. **ODS cơ sở -> Datamart**
+   - MERGE theo batch `TOP (10000)` để hạn chế transaction log.
+   - Hard delete Datamart có 3 điều kiện bắt buộc:
+     - chỉ trong cửa sổ D-3,
+     - chỉ trong đúng cơ sở (`NguonDuLieuKey`/`MaCoSo`),
+     - chỉ xóa khi không còn trong source.
+
+## Quy tắc nghiệp vụ FactThuPhiDichVu 3-in-1
+- Nguồn DV:
+  - `TongTienSauTangGiam = TongTien - ISNULL(TongGiam, 0) + ISNULL(TongTang, 0)`.
+- Nguồn BH:
+  - `TongTienSauTangGiam = TongTien + ISNULL(TienChenhLech, 0)`.
+
+## Early Arriving Facts và Seed Data
+- Các khóa dimension của fact phải fallback về seed:
+  - `ISNULL(LuotKhamKey, -1)`
+  - `ISNULL(BenhNhanKey, -1)`
+  - `ISNULL(DichVuKey, -1)`.
+
+## Quy tắc an toàn Landing dùng chung
+- Luôn TRUNCATE Landing ở đầu luồng.
+- Luôn TRUNCATE Landing ở cuối luồng (`finally`) để không rò rỉ dữ liệu giữa các cơ sở chạy tuần tự.
 ```
 
 ### SOURCE: docs/knowledge/GEM_DB_SCHEMAS.md
 ```md
 # GEM_DB_SCHEMAS.md
+
+## Mục tiêu
+- Chuẩn hóa phạm vi schema theo kiến trúc ETL v1 cho luồng tuần tự đa cơ sở.
+
+## Các schema chính trong luồng ETL
+- `stg_nano_v2`:
+  - Landing dùng chung cho incremental fact.
+  - Dữ liệu phải được TRUNCATE ở đầu và cuối mỗi vòng facility.
+- `<facility>_hisnano_v2` (ví dụ: `hanoi_hisnano_v2`, `hcm_hisnano_v2`):
+  - ODS theo cơ sở, là chặng trung gian ổn định trước khi đẩy Datamart.
+- `dm`:
+  - Datamart đích, chứa bảng dimension và fact phục vụ báo cáo.
+
+## Quy tắc dữ liệu theo chặng
+- Chặng Dimension (2-Hop):
+  - Production -> `<facility>_hisnano_v2` -> `dm`.
+- Chặng Fact (3-Hop):
+  - Production -> `stg_nano_v2` -> `<facility>_hisnano_v2` -> `dm`.
+
+## Hard Delete Guardrails theo schema
+- Tại ODS (`<facility>_hisnano_v2`):
+  - `WHEN NOT MATCHED BY SOURCE AND Target.<NgayCol> BETWEEN @LookbackDate AND @ToDate THEN DELETE`.
+- Tại Datamart (`dm`):
+  - `WHEN NOT MATCHED BY SOURCE`
+  - `AND Target.<NgayCol> BETWEEN @LookbackDate AND @ToDate`
+  - `AND Target.NguonDuLieuKey = @CurrentNguonDuLieu`
+  - `AND Target.MaCoSo = @CurrentMaCoSo`
+  - `THEN DELETE`.
+
+## Seed Data bắt buộc
+- Các khóa dimension trong fact phải fallback `-1`:
+  - `LuotKhamKey`
+  - `BenhNhanKey`
+  - `DichVuKey`
+
+## Batch và phạm vi transaction
+- MERGE ODS -> Datamart cho fact phải chạy theo batch `TOP (10000)`.
+- Mục tiêu: giảm áp lực transaction log và dễ kiểm soát rollback khi lỗi.
 ```
 
 ### SOURCE: docs/knowledge/GEM_DEPENDENCY_GRAPH.md
 ```md
 # GEM_DEPENDENCY_GRAPH.md
+
+## Mục tiêu
+- Ghi nhận quan hệ phụ thuộc của khung ETL v1 mới trong `src/jobs`.
+
+## Sơ đồ phụ thuộc lớp chính
+- `src/core/base_loader.py`
+  - `BaseLoader`
+    - là lớp cha cho mọi loader ETL.
+- `src/jobs/dimension_loader.py`
+  - `DimensionLoader(BaseLoader)`
+  - phụ thuộc SQL templates trong `src/db/templates/sql/dimension/*` và `src/db/templates/sql/fact/DimLuotKham_merge.sql`.
+- `src/jobs/fact_loader.py`
+  - `FactLoader(BaseLoader)`
+  - phụ thuộc schema `stg_nano_v2`, `<facility>_hisnano_v2`, `dm`.
+- `src/jobs/sync_orchestrator.py`
+  - `SyncOrchestrator`
+  - phụ thuộc `DimensionLoader`, `FactLoader`, `python-dotenv`.
+
+## Quan hệ điều phối runtime
+1. `SyncOrchestrator.run(...)` xác định danh sách facility mục tiêu (Selective Sync).
+2. Với từng facility theo thứ tự tuần tự:
+   - gọi `DimensionLoader.execute_load(...)`.
+   - gọi `FactLoader.execute_load(...)`.
+3. `FactLoader` tự đảm bảo cleanup Landing đầu/cuối luồng.
+
+## Phụ thuộc cấu hình
+- Bắt buộc có `DATAMART_CONNECTION_STRING`.
+- Production connection map theo facility:
+  - `PROD_CONNECTION_HANOI`
+  - `PROD_CONNECTION_HCM`
+  - `PROD_CONNECTION_HALONG`
+  - `PROD_CONNECTION_HAIPHONG`
+- Cấu hình Selective Sync:
+  - `ACTIVE_FACILITIES` hoặc tham số `target_facilities`.
+
+## Phụ thuộc nghiệp vụ và an toàn dữ liệu
+- Hard delete ở ODS/Datamart phụ thuộc vào cột ngày nghiệp vụ (`NgayDenKham`) và cửa sổ D-3.
+- Cô lập đa cơ sở ở Datamart phụ thuộc `NguonDuLieuKey` + `MaCoSo`.
+- Early arriving facts phụ thuộc seed dimension key `-1`.
 ```
 
 ### SOURCE: docs/knowledge/GEM_ERROR_CONTEXT.md

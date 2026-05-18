@@ -19,6 +19,29 @@
   - `/src/db/templates/sql/`
 - File Master tương ứng: `MASTER_ETL_PROCESS.md`
 
+#### Bổ sung theo yêu cầu 20260518_0900_xay_dung_khung_dong_bo_v1
+- Module điều phối ETL tuần tự có hỗ trợ Selective Sync:
+  - `src/jobs/sync_orchestrator.py`
+  - Chức năng chính:
+    - Class `SyncOrchestrator` điều phối tuần tự theo facility.
+    - Hỗ trợ lọc cơ sở chạy bằng `ACTIVE_FACILITIES` hoặc tham số `run(target_facilities=...)`.
+    - Chỉ map/khởi tạo connection theo facility được chọn, bỏ qua facility ngoài scope.
+- Module nạp Dimension full load 2-Hop:
+  - `src/jobs/dimension_loader.py`
+  - Chức năng chính:
+    - Class `DimensionLoader` kế thừa `BaseLoader`.
+    - Luồng Production -> ODS cơ sở bằng `TRUNCATE` + BCP `-w`.
+    - Luồng ODS cơ sở -> Datamart bằng MERGE SQL template.
+- Module nạp Fact incremental 3-Hop:
+  - `src/jobs/fact_loader.py`
+  - Chức năng chính:
+    - Class `FactLoader` kế thừa `BaseLoader`.
+    - Luồng Prod -> Landing `stg_nano_v2` theo cửa sổ trượt D-3.
+    - Luồng Landing -> ODS bằng MERGE có hard delete giới hạn D-3.
+    - Luồng ODS -> Datamart bằng MERGE batching `TOP (10000)`.
+    - Áp dụng fallback seed key `-1` cho early arriving facts.
+    - Dọn Landing ở đầu và cuối luồng để chống rò rỉ dữ liệu giữa facilities.
+
 ### Nhóm INTERFACE
 - Phạm vi:
   - `/src/ui/`
