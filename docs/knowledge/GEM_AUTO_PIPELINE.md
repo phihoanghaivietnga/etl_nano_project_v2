@@ -39,3 +39,14 @@
 - FactLoader luôn dọn Landing ở đầu và cuối luồng.
 - Hard delete incremental chỉ được áp dụng trong cửa sổ D-3 và đúng phạm vi cơ sở.
 - MERGE Fact lên Datamart bắt buộc cô lập theo `NguonDuLieuKey`.
+
+## Cơ chế Giám sát (Monitoring)
+- Mục tiêu: tránh hiện tượng nuốt log/đóng băng terminal khi chạy BCP bảng lớn.
+- Áp dụng tại `DimensionLoader`:
+  - Log runtime dùng timestamp đến mili-giây theo format `YYYY-MM-DD HH:MM:SS.mmm` và `flush=True` để đẩy ra terminal ngay lập tức.
+  - BCP `queryout` và `in` được chạy bằng `subprocess.Popen` thay cho `subprocess.run`.
+  - Toàn bộ `stdout` của BCP được stream theo từng dòng và in trực tiếp trong khi tiến trình đang chạy.
+  - Nếu tiến trình BCP trả mã lỗi khác 0 thì raise `subprocess.CalledProcessError` để fail-fast.
+  - Trạng thái MERGE ODS -> Datamart có log rõ ràng theo cặp:
+    - `[START] Đang thực thi MERGE ODS -> Datamart cho <dimension_name>...`
+    - `[SUCCESS] Hoàn thành MERGE <dimension_name>`

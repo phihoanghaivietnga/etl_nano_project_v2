@@ -15,10 +15,15 @@
 - Hình thức: Không sử dụng icon trong mọi tệp tài liệu .md.
 - Kỹ thuật: Mọi mã nguồn phải theo hướng đối tượng (OOP), kế thừa từ Base Class tại src/core.
 
+## 3.1. Điều luật kết nối cơ sở dữ liệu
+- KẾT NỐI STAGING & DATAMART: Được phép thực thi các câu lệnh thay đổi dữ liệu và cấu trúc (TRUNCATE, INSERT, UPDATE, DELETE, MERGE, ALTER, CREATE).
+- KẾT NỐI PRODUCTION: TUYỆT ĐỐI CẤM mọi câu lệnh làm thay đổi dữ liệu (CREATE, UPDATE, DELETE, TRUNCATE, ALTER, DROP, INSERT). Kết nối đến Production CHỈ ĐƯỢC PHÉP sử dụng để ĐỌC (SELECT) hoặc dùng cho công cụ trích xuất (BCP OUT).
+
 ## 4. Cấu trúc thư mục
 ETL_Nano_Project_V2/
 ├── agents.md               # File chiến lược điều phối hệ thống
 ├── README.md               # Hướng dẫn tổng quan dự án
+├── PROJECT_CHRONICLE.md    # Nhật ký tiến hóa của dự án
 ├── .env                    # Lưu trữ biến môi trường và kết nối DB
 ├── config/                 # Cấu hình hệ thống và danh sách bảng
 ├── docs/

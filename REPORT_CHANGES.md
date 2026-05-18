@@ -376,3 +376,288 @@
 - Đã chạy kiểm tra cú pháp:
   - `python -m py_compile src/jobs/dimension_loader.py src/jobs/fact_loader.py src/jobs/sync_orchestrator.py src/jobs/__init__.py`
 - Kết quả: pass, không có lỗi syntax.
+
+## Phạm vi cập nhật theo yêu cầu 20260518_1040_xay_dung_luong_full_load_v1
+- Cập nhật `src/jobs/dimension_loader.py`
+- Cập nhật `src/jobs/fact_loader.py`
+- Cập nhật `agents.md`
+- Cập nhật `PROJECT_CHRONICLE.md`
+- Cập nhật `docs/knowledge/GEM_CODE_MAP.md`
+- Cập nhật `docs/prompts/20260518_1040_xay_dung_luong_full_load_v1.md`
+- Cập nhật `REPORT_CHANGES.md`
+
+## Nội dung đã thực hiện
+
+### 1) Chuẩn hóa lại FULL_LOAD Dimension đúng 4 mapping bắt buộc
+- `DimensionLoader` chỉ còn 4 cấu hình full-load:
+  - `DimBenhNhan`: `DMBenhNhan` -> `DimBenhNhan_merge.sql`
+  - `DimBenh`: `DMBenh` -> `DimBenh_merge.sql`
+  - `DimLoaiGoiDichVu`: `LoaiGoiDichVuNT` -> `DimLoaiGoiDichVu_merge.sql`
+  - `DimDichVu`: `DMLoaiDichVu`, `DMDichVu`, `DMDichVuChiTiet` -> `dim_dich_vu_merge.sql`
+- Đã gỡ hoàn toàn `DimLuotKham` khỏi `DimensionLoader` để tránh rủi ro `TRUNCATE` nhầm vào bảng có bản chất incremental.
+
+### 2) Xử lý “tử huyệt” DimDichVu đúng quy tắc
+- Luồng thực thi trong `DimensionLoader` bảo đảm:
+  1. TRUNCATE + BCP vào ODS cho `DMLoaiDichVu`
+  2. TRUNCATE + BCP vào ODS cho `DMDichVu`
+  3. TRUNCATE + BCP vào ODS cho `DMDichVuChiTiet`
+  4. Chỉ sau khi đủ 3 bảng ODS mới gọi MERGE `dim_dich_vu_merge.sql`
+
+### 3) Thiết lập quân luật kết nối DB và áp dụng vào code
+- `agents.md` đã thêm mục `3.1. Điều luật kết nối cơ sở dữ liệu`:
+  - Staging/Datamart được phép chạy lệnh thay đổi dữ liệu và cấu trúc.
+  - Production chỉ được phép đọc (`SELECT`) hoặc `BCP OUT`.
+- `DimensionLoader` đã bổ sung guard:
+  - `_run_bcp_queryout` chặn non-SELECT trên Production.
+  - `TRUNCATE`/`MERGE` chỉ chạy qua connection Datamart/ODS.
+
+### 4) Tích hợp Orchestrator theo thứ tự tuần tự
+- Rà soát `SyncOrchestrator.run(...)`:
+  - trong mỗi facility, Dimension chạy hoàn tất trước khi bắt đầu Fact.
+  - giữ nguyên nguyên tắc chạy tuần tự cơ sở này xong mới sang cơ sở tiếp theo.
+
+### 5) Ghi nhận nợ kỹ thuật DimLuotKham chuyển sang phạm vi Fact
+- Bổ sung cờ theo dõi trong `FactLoader`:
+  - `PENDING_INCREMENTAL_DIMENSIONS = ("DimLuotKham",)`
+- Mục tiêu: ghi nhận rõ rằng DimLuotKham thuộc phạm vi incremental, không còn ở full-load dimension.
+
+### 6) Cập nhật tri thức và báo cáo prompt
+- `PROJECT_CHRONICLE.md`: thêm ADR-10, ADR-11 cho đợt điều chỉnh 1040.
+- `GEM_CODE_MAP.md`: cập nhật mapping 4 dimension bắt buộc + rule an toàn DB.
+- `docs/prompts/20260518_1040_xay_dung_luong_full_load_v1.md`:
+  - điền đầy đủ phần `# BÁO CÁO CỦA THỢ CODE` gồm class/hàm, đoạn mapping code và trích dẫn Chronicle.
+
+## Phạm vi cập nhật theo yêu cầu 20260518_1325_sync_log_full_load_v1
+- Cập nhật `src/jobs/dimension_loader.py`
+- Cập nhật `PROJECT_CHRONICLE.md`
+- Cập nhật `docs/knowledge/GEM_CODE_MAP.md`
+- Cập nhật `docs/knowledge/GEM_AUTO_PIPELINE.md`
+- Cập nhật `docs/prompts/20260518_1325_sync_log_full_load_v1.md`
+- Cập nhật `REPORT_CHANGES.md`
+
+## Nội dung đã thực hiện
+
+### 1) Nâng cấp log runtime theo chuẩn real-time
+- Override `_log` trong `DimensionLoader`:
+  - format timestamp mili-giây `YYYY-MM-DD HH:MM:SS.mmm`
+  - `flush=True` để đẩy log ra terminal ngay khi phát sinh.
+
+### 2) Chuyển BCP sang streaming bằng `subprocess.Popen`
+- Cập nhật hai hàm:
+  - `_run_bcp_queryout(...)`
+  - `_run_bcp_in(...)`
+- Cơ chế mới:
+  - chạy `Popen(..., stdout=PIPE, stderr=STDOUT)`
+  - đọc `stdout` theo từng dòng trong vòng lặp và in trực tiếp realtime
+  - khi `returncode != 0` thì raise `subprocess.CalledProcessError` để fail-fast.
+
+### 3) Giữ nguyên guard an toàn Production (bắt buộc)
+- Trong `_run_bcp_queryout`, điều kiện bảo vệ vẫn giữ nguyên:
+  - chỉ cho phép query bắt đầu bằng `SELECT`
+  - nếu không hợp lệ thì raise `ValueError`.
+
+### 4) Bổ sung log trạng thái MERGE rõ ràng
+- Trong `_execute_dimension_spec`:
+  - trước merge: `[START] Đang thực thi MERGE ODS -> Datamart cho <dimension_name>...`
+  - sau merge: `[SUCCESS] Hoàn thành MERGE <dimension_name>`
+
+### 5) Cập nhật tri thức bắt buộc
+- `PROJECT_CHRONICLE.md`: thêm ADR-12 cho quyết định dùng Popen streaming real-time.
+- `GEM_CODE_MAP.md`: bổ sung mô tả chi tiết cơ chế streaming của `_run_bcp_queryout` và `_run_bcp_in`.
+- `GEM_AUTO_PIPELINE.md`: thêm mục `Cơ chế Giám sát (Monitoring)` mô tả timestamp ms + stream BCP/MERGE trực tiếp terminal.
+
+### 6) Cập nhật báo cáo prompt
+- Điền đầy đủ phần `# BÁO CÁO CỦA THỢ CODE` trong:
+  - `docs/prompts/20260518_1325_sync_log_full_load_v1.md`
+- Bao gồm:
+  - đoạn code 2 hàm BCP đã sửa
+  - trích dẫn các đoạn mới trong Chronicle, GEM_CODE_MAP, GEM_AUTO_PIPELINE.
+
+## Phạm vi cập nhật theo yêu cầu 20260518_1355_sync_log_full_load_v2
+- Cập nhật `src/jobs/dimension_loader.py`
+- Cập nhật `PROJECT_CHRONICLE.md`
+- Cập nhật `docs/knowledge/GEM_CODE_MAP.md`
+- Cập nhật `docs/prompts/20260518_1355_sync_log_full_load_v2.md`
+- Cập nhật `REPORT_CHANGES.md`
+
+## Nội dung đã thực hiện
+
+### 1) Hotfix lỗi kế thừa `_log` khi chạy Orchestrator
+- Sự cố: `TypeError: DimensionLoader._log() got an unexpected keyword argument 'queue'`.
+- Nguyên nhân: lớp cha `BaseLoader` truyền `queue/loop` vào `_log`, nhưng lớp con `DimensionLoader` override không hứng keyword arguments.
+- Bản vá:
+  - đổi chữ ký hàm từ:
+    - `def _log(self, message: str) -> None`
+  - thành:
+    - `def _log(self, message: str, **kwargs) -> None`
+  - bổ sung `_ = kwargs` để thể hiện chủ đích hứng tham số thừa và giữ tương thích đa hình.
+
+### 2) Cập nhật tri thức đồng bộ
+- `PROJECT_CHRONICLE.md`:
+  - thêm ADR-13 ghi nhận sự cố, nguyên nhân, bản vá và bài học `**kwargs` khi override method.
+- `GEM_CODE_MAP.md`:
+  - cập nhật mô tả chữ ký mới của `DimensionLoader._log(self, message: str, **kwargs)` và lý do tương thích với `BaseLoader._log(..., queue=..., loop=...)`.
+
+### 3) Cập nhật báo cáo prompt
+- Hoàn tất phần `# BÁO CÁO CỦA THỢ CODE` trong:
+  - `docs/prompts/20260518_1355_sync_log_full_load_v2.md`
+- Bao gồm:
+  - đoạn code `_log` sau sửa
+  - trích dẫn nguyên văn đoạn đã chèn vào `PROJECT_CHRONICLE.md` và `GEM_CODE_MAP.md`.
+
+## Phạm vi cập nhật theo yêu cầu 20260518_1420_sync_log_full_load_v3
+- Cập nhật `src/jobs/dimension_loader.py`
+- Cập nhật `PROJECT_CHRONICLE.md`
+- Cập nhật `docs/prompts/20260518_1420_sync_log_full_load_v3.md`
+- Cập nhật `REPORT_CHANGES.md`
+
+## Nội dung đã thực hiện
+
+### 1) Hotfix deadlock transaction tại luồng FULL LOAD
+- Sự cố: Pipeline treo khi bắt đầu `BCP IN` vào ODS.
+- Nguyên nhân: `TRUNCATE TABLE` chạy qua `pyodbc` nhưng chưa `commit()` nên giữ table lock, làm `bcp` subprocess không thể ghi vào bảng đích.
+- Bản vá trong `DimensionLoader`:
+  - `_truncate_table(...)` thêm `connection.commit()` ngay sau `self.execute_sql_sync(connection, sql)`.
+  - `_execute_dimension_spec(...)` thêm `connection.commit()` ngay sau `self.execute_sql_sync(connection, merge_sql)`.
+
+### 2) Cập nhật tri thức bắt buộc
+- `PROJECT_CHRONICLE.md`:
+  - thêm ADR-14 ghi nhận root cause table lock/deadlock và quy tắc commit sớm khi phối hợp `pyodbc` + `bcp` subprocess.
+
+### 3) Cập nhật báo cáo prompt
+- Hoàn tất phần `# BÁO CÁO CỦA THỢ CODE` trong:
+  - `docs/prompts/20260518_1420_sync_log_full_load_v3.md`
+- Bao gồm:
+  - nội dung 2 hàm `_truncate_table` và `_execute_dimension_spec` sau khi sửa.
+
+## Phạm vi cập nhật theo yêu cầu 20260518_1520_sync_log_full_load_v4
+- Cập nhật `src/jobs/dimension_loader.py`
+- Cập nhật `PROJECT_CHRONICLE.md`
+- Cập nhật `docs/prompts/20260518_1520_sync_log_full_load_v4.md`
+- Cập nhật `REPORT_CHANGES.md`
+
+## Nội dung đã thực hiện
+
+### 1) Hotfix bảo mật log BCP
+- Gỡ hoàn toàn log in chi tiết `command` trong:
+  - `_run_bcp_queryout(...)`
+  - `_run_bcp_in(...)`
+- Thay bằng log trung tính:
+  - `Đang thực thi BCP OUT...`
+  - `Đang thực thi BCP IN...`
+
+### 2) Hotfix tham số BCP chống lỗi cast/xô cột
+- `_run_bcp_queryout(...)`:
+  - giữ `-w` (UTF-16LE)
+  - đổi delimiter cột sang `-t "<|>"`
+- `_run_bcp_in(...)`:
+  - giữ `-w` (UTF-16LE)
+  - đổi delimiter cột sang `-t "<|>"`
+  - thêm `-k` (Keep Nulls)
+
+### 3) Cập nhật tri thức bắt buộc
+- `PROJECT_CHRONICLE.md`:
+  - thêm ADR-15 cho hai vấn đề trọng yếu:
+    - cấm log lộ credentials từ command BCP
+    - chuẩn tham số sinh tử `-w -t "<|>" -k` để giảm lỗi cast và xô cột dữ liệu y tế.
+
+### 4) Cập nhật báo cáo prompt
+- Hoàn tất phần `# BÁO CÁO CỦA THỢ CODE` trong:
+  - `docs/prompts/20260518_1520_sync_log_full_load_v4.md`
+- Bao gồm:
+  - đoạn cấu trúc `command = [...]` của `_run_bcp_queryout` và `_run_bcp_in` sau khi sửa.
+
+## Phạm vi cập nhật theo yêu cầu 20260518_1550_sync_log_full_load_v5
+- Cập nhật `src/jobs/dimension_loader.py`
+- Cập nhật `PROJECT_CHRONICLE.md`
+- Cập nhật `docs/prompts/20260518_1550_sync_log_full_load_v5.md`
+- Cập nhật `REPORT_CHANGES.md`
+
+## Nội dung đã thực hiện
+
+### 1) Hotfix cú pháp command BCP
+- Chuẩn hóa đuôi command trong `_run_bcp_queryout(...)` thành:
+  - `"-w", "-t<|>", "-r\\n", "-q"`
+- Chuẩn hóa đuôi command trong `_run_bcp_in(...)` thành:
+  - `"-w", "-t<|>", "-k", "-r\\n", "-q"`
+- Mục tiêu: tránh lỗi parser BCP gây tràn dòng/text incomplete và lỗi cast kiểu dữ liệu.
+
+### 2) Hotfix bảo mật traceback
+- Gỡ hoàn toàn `raise subprocess.CalledProcessError(process.returncode, command)` ở cả hai hàm BCP.
+- Thay bằng lỗi chung không lộ command:
+  - `RuntimeError("Tiến trình BCP thất bại ... Đã ẩn chi tiết command để bảo mật.")`
+
+### 3) Cập nhật tri thức bắt buộc
+- `PROJECT_CHRONICLE.md`:
+  - thêm ADR-16 về chuẩn cờ `-t<|>` + `-r\n` và nguyên tắc che giấu credentials khỏi traceback.
+
+### 4) Cập nhật báo cáo prompt
+- Hoàn tất phần `# BÁO CÁO CỦA THỢ CODE` trong:
+  - `docs/prompts/20260518_1550_sync_log_full_load_v5.md`
+- Bao gồm:
+  - cấu trúc mảng `command`
+  - đoạn xử lý exception của `_run_bcp_queryout` và `_run_bcp_in` sau khi sửa.
+
+## Phạm vi cập nhật theo yêu cầu 20260518_1625_sync_log_full_load_v6
+- Cập nhật `src/jobs/dimension_loader.py`
+- Cập nhật `PROJECT_CHRONICLE.md`
+- Cập nhật `docs/knowledge/GEM_CODE_MAP.md`
+- Cập nhật `docs/prompts/20260518_1625_sync_log_full_load_v6.md`
+- Cập nhật `REPORT_CHANGES.md`
+
+## Nội dung đã thực hiện
+
+### 1) Thay đổi kiến trúc lõi Data Ingestion
+- Khai tử hoàn toàn BCP CLI trong `DimensionLoader`:
+  - xóa `_run_bcp_queryout(...)`
+  - xóa `_run_bcp_in(...)`
+  - bỏ import `subprocess`, `tempfile`, `os`
+- Chuyển sang ODBC Bulk Copy native bằng `pyodbc.executemany` + `fast_executemany=True`.
+
+### 2) Viết lại `_copy_prod_to_ods` theo chuẩn chunking an toàn
+- Kết nối Production chỉ để `SELECT`.
+- Đọc dữ liệu theo lô `fetchmany(10000)`.
+- Sinh động `INSERT` theo metadata cột (`prod_cursor.description`).
+- Nạp ODS qua `executemany` + `connection.commit()` theo từng lô.
+- Log tiến độ số dòng đã copy và log hoàn tất.
+
+### 3) Cập nhật tri thức bắt buộc
+- `PROJECT_CHRONICLE.md`:
+  - thêm ADR-17 ghi nhận nguyên nhân khai tử BCP CLI (newline/tab ẩn làm vỡ text file gây cast lỗi),
+  - quyết định chuyển sang `pyodbc.fast_executemany` + chunking 10k.
+- `docs/knowledge/GEM_CODE_MAP.md`:
+  - gỡ mô tả `_run_bcp_queryout/_run_bcp_in`,
+  - cập nhật mô tả `_copy_prod_to_ods` theo ODBC native.
+
+### 4) Cập nhật báo cáo prompt
+- Hoàn tất phần `# BÁO CÁO CỦA THỢ CODE` trong:
+  - `docs/prompts/20260518_1625_sync_log_full_load_v6.md`
+- Bao gồm:
+  - nguyên văn hàm `_copy_prod_to_ods` mới,
+  - trích dẫn nội dung ADR-17 đã cập nhật trong Chronicle.
+
+## Phạm vi cập nhật theo yêu cầu 20260518_1640_sync_log_full_load_v7
+- Cập nhật `src/jobs/dimension_loader.py`
+- Cập nhật `PROJECT_CHRONICLE.md`
+- Cập nhật `docs/prompts/20260518_1640_sync_log_full_load_v7.md`
+- Cập nhật `REPORT_CHANGES.md`
+
+## Nội dung đã thực hiện
+
+### 1) Hotfix MemoryError trong `_copy_prod_to_ods`
+- Vô hiệu hóa `fast_executemany` để tránh tràn RAM với cột `VARCHAR/NVARCHAR(MAX)`:
+  - đổi `stg_cursor.fast_executemany = True` -> `stg_cursor.fast_executemany = False`.
+- Hạ kích thước lô dữ liệu:
+  - đổi `chunk_size = 10000` -> `chunk_size = 1000`.
+- Giữ nguyên toàn bộ logic vòng lặp `while`, `executemany`, `commit`, và log tiến độ.
+
+### 2) Cập nhật tri thức bắt buộc
+- `PROJECT_CHRONICLE.md`:
+  - thêm ADR-18 ghi nhận sự cố kinh điển `MemoryError` khi bật `fast_executemany` trên bảng có cột MAX.
+  - chốt quyết định ưu tiên ổn định: executemany tiêu chuẩn + chunk_size=1000.
+
+### 3) Cập nhật báo cáo prompt
+- Hoàn tất phần `# BÁO CÁO CỦA THỢ CODE` trong:
+  - `docs/prompts/20260518_1640_sync_log_full_load_v7.md`
+- Bao gồm:
+  - đúng 10 dòng code thể hiện thay đổi cấu hình cursor và `chunk_size` trong `_copy_prod_to_ods`.

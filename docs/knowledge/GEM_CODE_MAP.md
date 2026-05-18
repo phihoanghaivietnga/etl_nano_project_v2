@@ -30,8 +30,31 @@
   - `src/jobs/dimension_loader.py`
   - Chức năng chính:
     - Class `DimensionLoader` kế thừa `BaseLoader`.
-    - Luồng Production -> ODS cơ sở bằng `TRUNCATE` + BCP `-w`.
-    - Luồng ODS cơ sở -> Datamart bằng MERGE SQL template.
+    - Luồng Production -> ODS cơ sở bằng ODBC Bulk Copy native (`pyodbc.executemany`).
+    - Luồng ODS cơ sở -> Datamart bằng MERGE SQL template có sẵn.
+    - Logging real-time cho full-load:
+      - Hàm `_log(self, message: str, **kwargs)` in timestamp đến mili-giây và `flush=True`.
+      - `**kwargs` được dùng để tương thích đa hình với `BaseLoader._log(..., queue=..., loop=...)` trong luồng orchestrator.
+      - Hàm `_copy_prod_to_ods(...)` đọc trực tiếp từ Production bằng `SELECT` và đẩy vào ODS qua `executemany`.
+      - `stg_cursor.fast_executemany = True` để kích hoạt ODBC binary bulk copy tốc độ cao.
+      - Chunking 10,000 dòng/lô + commit theo lô để cân bằng hiệu năng và an toàn bộ nhớ.
+      - Guard an toàn Production giữ nguyên: connection Production chỉ dùng truy vấn `SELECT`.
+      - Trạng thái MERGE có cặp log `[START]` và `[SUCCESS]` trong `_execute_dimension_spec`.
+
+#### Bổ sung theo yêu cầu 20260518_1040_xay_dung_luong_full_load_v1
+- Chuẩn hóa phạm vi FULL_LOAD trong `DimensionLoader` chỉ còn đúng 4 dimension:
+  - `DimBenhNhan`: `DMBenhNhan` -> `DimBenhNhan_merge.sql`
+  - `DimBenh`: `DMBenh` -> `DimBenh_merge.sql`
+  - `DimLoaiGoiDichVu`: `LoaiGoiDichVuNT` -> `DimLoaiGoiDichVu_merge.sql`
+  - `DimDichVu`: (`DMLoaiDichVu`, `DMDichVu`, `DMDichVuChiTiet`) -> `dim_dich_vu_merge.sql`
+- Quy tắc đặc biệt DimDichVu:
+  - Bắt buộc chạy BCP đủ 3 bảng vào ODS trước khi gọi MERGE Datamart.
+- Nợ kỹ thuật đã xử lý:
+  - Gỡ `DimLuotKham` khỏi `DimensionLoader` để tránh `TRUNCATE` nhầm lên bảng có bản chất incremental.
+  - Trạng thái theo dõi ở luồng Fact: `FactLoader.PENDING_INCREMENTAL_DIMENSIONS = ("DimLuotKham",)`.
+- Quân luật an toàn DB trong `DimensionLoader`:
+  - `production_connection` chỉ dùng cho `SELECT`/`BCP OUT`.
+  - `TRUNCATE` và `MERGE` chỉ thực thi bằng connection Datamart/ODS.
 - Module nạp Fact incremental 3-Hop:
   - `src/jobs/fact_loader.py`
   - Chức năng chính:

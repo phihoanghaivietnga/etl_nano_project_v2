@@ -21,6 +21,9 @@ class FactTableSpec:
 
 class FactLoader(BaseLoader):
     LANDING_SCHEMA = "stg_nano_v2"
+    # Nợ kỹ thuật đã tách khỏi luồng FULL_LOAD Dimension:
+    # DimLuotKham có bản chất incremental và sẽ được xử lý trong phạm vi Fact pipeline.
+    PENDING_INCREMENTAL_DIMENSIONS: tuple[str, ...] = ("DimLuotKham",)
 
     FACT_SPECS: tuple[FactTableSpec, ...] = (
         FactTableSpec(
