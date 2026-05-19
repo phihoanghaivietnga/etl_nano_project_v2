@@ -249,6 +249,32 @@
 - **Bài học kinh nghiệm**:
   - Với schema có cột MAX, cần xem `fast_executemany` là tính năng có điều kiện, không bật mặc định.
   - Chunking nhỏ hơn là chi phí hiệu năng cần chấp nhận để đảm bảo an toàn bộ nhớ tuyệt đối.
+
+### ADR-19: Chuyển ma trận vận hành Multi-tenant sang `config/tables.yaml`
+- **Bối cảnh**:
+  - Quản trị danh sách cơ sở chạy và tham số chunk bằng `.env` trở nên rời rạc, khó mở rộng khi vận hành đa cơ sở.
+- **Quyết định**:
+  - Chuyển cấu hình vận hành sang `config/tables.yaml` theo 2 khối:
+    - `etl_settings`: chứa `odbc_chunk_size`, `active_facilities`.
+    - `facilities`: chứa ma trận định danh và schema theo từng `facility_code`.
+- **Triển khai**:
+  - `SyncOrchestrator` bỏ đọc `ACTIVE_FACILITIES` từ môi trường, chuyển sang đọc `etl_settings.active_facilities` từ YAML.
+  - Registry facility được build động từ node `facilities` trong YAML.
+
+### ADR-20: Tenant Injection trong `DimensionLoader` để chống NULL định danh cơ sở
+- **Sự cố nghiệp vụ**:
+  - Dữ liệu Production mang tính single-tenant, thiếu cột định danh cơ sở khi đẩy lên cấu trúc multi-tenant ở ODS/Datamart.
+  - Hệ thống phát sinh lỗi kiểu `Cannot insert the value NULL` cho các cột định danh.
+- **Quyết định kỹ thuật**:
+  - Tại `_copy_prod_to_ods`, đọc `nguon_dulieu_key` và `co_so_key` từ `config/tables.yaml` theo `facility_code`.
+  - Tiêm thêm 3 cột tenant vào payload insert:
+    - `NguonDuLieuKey`
+    - `CoSoKey`
+    - `MaCoSo`
+- **Thực thi**:
+  - Mở rộng danh sách cột đích: `target_columns = prod_columns + [NguonDuLieuKey, CoSoKey, MaCoSo]`.
+  - Mở rộng dữ liệu mỗi dòng trên RAM: `tuple(row) + tenant_values`.
+  - Đồng thời đọc `odbc_chunk_size` trực tiếp từ YAML để đồng bộ tham số vận hành.
 ```
 
 ### SOURCE: README.md
@@ -385,10 +411,19 @@ ETL_Nano_Project_V2/
 
 ## Selective Sync
 - Hỗ trợ 2 cách chọn cơ sở chạy:
-  - Biến môi trường: `ACTIVE_FACILITIES=hanoi,hcm`
+  - Cấu hình YAML: `config/tables.yaml` -> `etl_settings.active_facilities`
   - Tham số hàm: `run(target_facilities=['hanoi'])`
 - Nếu không truyền hoặc nhận `ALL` thì chạy toàn bộ facility đã định nghĩa.
 - Facility ngoài scope không được khởi tạo connection.
+
+## Cấu hình vận hành tập trung (YAML)
+- File chuẩn: `config/tables.yaml`
+- Khối `etl_settings`:
+  - `odbc_chunk_size`: kích thước lô nạp ODBC cho DimensionLoader.
+  - `active_facilities`: danh sách cơ sở mặc định cho orchestrator.
+- Khối `facilities.<facility_code>`:
+  - `nguon_dulieu_key`, `co_so_key`, `staging_schema`.
+- Quy tắc: ưu tiên YAML làm nguồn cấu hình chính cho matrix multi-tenant; `.env` chỉ giữ chuỗi kết nối.
 
 ## Input connection chuẩn
 - Datamart: `DATAMART_CONNECTION_STRING`
@@ -411,12 +446,9 @@ ETL_Nano_Project_V2/
 - MERGE Fact lên Datamart bắt buộc cô lập theo `NguonDuLieuKey`.
 
 ## Cơ chế Giám sát (Monitoring)
-- Mục tiêu: tránh hiện tượng nuốt log/đóng băng terminal khi chạy BCP bảng lớn.
 - Áp dụng tại `DimensionLoader`:
-  - Log runtime dùng timestamp đến mili-giây theo format `YYYY-MM-DD HH:MM:SS.mmm` và `flush=True` để đẩy ra terminal ngay lập tức.
-  - BCP `queryout` và `in` được chạy bằng `subprocess.Popen` thay cho `subprocess.run`.
-  - Toàn bộ `stdout` của BCP được stream theo từng dòng và in trực tiếp trong khi tiến trình đang chạy.
-  - Nếu tiến trình BCP trả mã lỗi khác 0 thì raise `subprocess.CalledProcessError` để fail-fast.
+  - Log runtime dùng timestamp đến mili-giây theo format `YYYY-MM-DD HH:MM:SS.mmm` và `flush=True`.
+  - Luồng ODBC copy log tiến độ theo tổng số dòng đã nạp từng lô.
   - Trạng thái MERGE ODS -> Datamart có log rõ ràng theo cặp:
     - `[START] Đang thực thi MERGE ODS -> Datamart cho <dimension_name>...`
     - `[SUCCESS] Hoàn thành MERGE <dimension_name>`
@@ -450,7 +482,7 @@ ETL_Nano_Project_V2/
   - `src/jobs/sync_orchestrator.py`
   - Chức năng chính:
     - Class `SyncOrchestrator` điều phối tuần tự theo facility.
-    - Hỗ trợ lọc cơ sở chạy bằng `ACTIVE_FACILITIES` hoặc tham số `run(target_facilities=...)`.
+    - Hỗ trợ lọc cơ sở chạy bằng `etl_settings.active_facilities` trong `config/tables.yaml` hoặc tham số `run(target_facilities=...)`.
     - Chỉ map/khởi tạo connection theo facility được chọn, bỏ qua facility ngoài scope.
 - Module nạp Dimension full load 2-Hop:
   - `src/jobs/dimension_loader.py`
@@ -461,9 +493,10 @@ ETL_Nano_Project_V2/
     - Logging real-time cho full-load:
       - Hàm `_log(self, message: str, **kwargs)` in timestamp đến mili-giây và `flush=True`.
       - `**kwargs` được dùng để tương thích đa hình với `BaseLoader._log(..., queue=..., loop=...)` trong luồng orchestrator.
-      - Hàm `_copy_prod_to_ods(...)` đọc trực tiếp từ Production bằng `SELECT` và đẩy vào ODS qua `executemany`.
-      - `stg_cursor.fast_executemany = True` để kích hoạt ODBC binary bulk copy tốc độ cao.
-      - Chunking 10,000 dòng/lô + commit theo lô để cân bằng hiệu năng và an toàn bộ nhớ.
+      - Hàm `_copy_prod_to_ods(...)` đọc `odbc_chunk_size` từ `config/tables.yaml`.
+      - Hàm `_copy_prod_to_ods(...)` đọc cấu hình facility từ YAML để lấy `nguon_dulieu_key` và `co_so_key` theo `facility_code`.
+      - Hàm `_copy_prod_to_ods(...)` tự động Tenant Injection bằng cách nối thêm 3 cột `NguonDuLieuKey`, `CoSoKey`, `MaCoSo` vào payload insert ODS.
+      - Chunking theo tham số YAML + commit theo lô để cân bằng hiệu năng và an toàn bộ nhớ.
       - Guard an toàn Production giữ nguyên: connection Production chỉ dùng truy vấn `SELECT`.
       - Trạng thái MERGE có cặp log `[START]` và `[SUCCESS]` trong `_execute_dimension_spec`.
 

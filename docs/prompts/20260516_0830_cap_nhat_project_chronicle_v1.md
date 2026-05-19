@@ -38,16 +38,3 @@ Lưu ý: Chỉ ghi chép TƯ DUY KIẾN TRÚC và LÝ DO (TẠI SAO), tuyệt đ
 **SMI NGHIÊM NGẶT:** TUYỆT ĐỐI KHÔNG SỬ DỤNG HOẶC HIỂN THỊ BẤT KỲ THẺ CITATION/DẪN NGUỒN NÀO TRONG MÃ NGUỒN VÀ BÁO CÁO!
 
 **# BÁO CÁO CỦA THỢ CODE**
-
-Đã cập nhật Chronicle.
-
-Nội dung đã thực hiện:
-- Bổ sung mốc mới trong `PROJECT_CHRONICLE.md`:
-  - `## 2026-05-15: Giai đoạn Kiến trúc Dashboard V2`
-- Ghi nhận đầy đủ 5 ADR bắt buộc theo định dạng kiến trúc (Quyết định + Lý do):
-  1. Native OOP thay thế mô hình gọi API HTTP nội bộ.
-  2. DB Context Manager thay kết nối vĩnh cửu.
-  3. Semaphore toàn cục bảo vệ truy vấn đồng thời.
-  4. Wrapper `@ui.page` chống rò rỉ trạng thái giữa client.
-  5. Multi-Grid All-in-one theo thứ tự Dim trước, Fact sau.
-- Văn phong đã giữ ở mức chuyên nghiệp, súc tích, tập trung vào tư duy kiến trúc và lý do, không ghi dạng changelog chi tiết.

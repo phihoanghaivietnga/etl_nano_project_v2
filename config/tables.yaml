@@ -1,0 +1,10 @@
+etl_settings:
+  odbc_chunk_size: 5000
+  active_facilities:
+    - hanoi
+
+facilities:
+  hanoi:
+    nguon_dulieu_key: 2
+    co_so_key: 1
+    staging_schema: hanoi_hisnano_v2

@@ -24,7 +24,7 @@
   - `src/jobs/sync_orchestrator.py`
   - Chức năng chính:
     - Class `SyncOrchestrator` điều phối tuần tự theo facility.
-    - Hỗ trợ lọc cơ sở chạy bằng `ACTIVE_FACILITIES` hoặc tham số `run(target_facilities=...)`.
+    - Hỗ trợ lọc cơ sở chạy bằng `etl_settings.active_facilities` trong `config/tables.yaml` hoặc tham số `run(target_facilities=...)`.
     - Chỉ map/khởi tạo connection theo facility được chọn, bỏ qua facility ngoài scope.
 - Module nạp Dimension full load 2-Hop:
   - `src/jobs/dimension_loader.py`
@@ -35,9 +35,10 @@
     - Logging real-time cho full-load:
       - Hàm `_log(self, message: str, **kwargs)` in timestamp đến mili-giây và `flush=True`.
       - `**kwargs` được dùng để tương thích đa hình với `BaseLoader._log(..., queue=..., loop=...)` trong luồng orchestrator.
-      - Hàm `_copy_prod_to_ods(...)` đọc trực tiếp từ Production bằng `SELECT` và đẩy vào ODS qua `executemany`.
-      - `stg_cursor.fast_executemany = True` để kích hoạt ODBC binary bulk copy tốc độ cao.
-      - Chunking 10,000 dòng/lô + commit theo lô để cân bằng hiệu năng và an toàn bộ nhớ.
+      - Hàm `_copy_prod_to_ods(...)` đọc `odbc_chunk_size` từ `config/tables.yaml`.
+      - Hàm `_copy_prod_to_ods(...)` đọc cấu hình facility từ YAML để lấy `nguon_dulieu_key` và `co_so_key` theo `facility_code`.
+      - Hàm `_copy_prod_to_ods(...)` tự động Tenant Injection bằng cách nối thêm 3 cột `NguonDuLieuKey`, `CoSoKey`, `MaCoSo` vào payload insert ODS.
+      - Chunking theo tham số YAML + commit theo lô để cân bằng hiệu năng và an toàn bộ nhớ.
       - Guard an toàn Production giữ nguyên: connection Production chỉ dùng truy vấn `SELECT`.
       - Trạng thái MERGE có cặp log `[START]` và `[SUCCESS]` trong `_execute_dimension_spec`.
 

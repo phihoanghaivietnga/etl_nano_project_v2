@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import pyodbc
+import yaml
 
 from src.core.base_loader import BaseLoader
 
@@ -87,19 +88,32 @@ class DimensionLoader(BaseLoader):
             query = f"SELECT * FROM dbo.[{table_name}] WITH (NOLOCK)"
             prod_cursor.execute(query)
 
-            # Lấy danh sách cột để sinh câu lệnh INSERT động
-            columns = [column[0] for column in prod_cursor.description]
-            col_names_str = ", ".join([f"[{c}]" for c in columns])
-            placeholders = ", ".join(["?"] * len(columns))
+            prod_columns = [column[0] for column in prod_cursor.description]
+
+            # 3. Đọc YAML Config
+            yaml_path = Path("config/tables.yaml")
+            with yaml_path.open("r", encoding="utf-8") as stream:
+                config_data = yaml.safe_load(stream) or {}
+
+            # Đọc chunk_size và thông tin facility từ YAML
+            chunk_size = int(config_data.get("etl_settings", {}).get("odbc_chunk_size", 2000))
+            facility_config = config_data.get("facilities", {}).get(self.facility_code, {})
+            current_nguon_key = int(facility_config.get("nguon_dulieu_key", self.nguon_dulieu_key))
+            current_coso_key = int(facility_config.get("co_so_key", self.co_so_key))
+
+            # 4. Chuẩn bị Tenant Injection
+            tenant_columns = ["NguonDuLieuKey", "CoSoKey", "MaCoSo"]
+            target_columns = prod_columns + tenant_columns
+            tenant_values = (current_nguon_key, current_coso_key, self.facility_code)
+
+            # 5. Build câu lệnh INSERT động
+            col_names_str = ", ".join([f"[{c}]" for c in target_columns])
+            placeholders = ", ".join(["?"] * len(target_columns))
             insert_sql = f"INSERT INTO [{self.facility_schema}].[{table_name}] ({col_names_str}) VALUES ({placeholders})"
 
-            # 3. Chuẩn bị Cursor cho Staging với fast_executemany
             stg_cursor = connection.cursor()
-            # Hotfix MemoryError: vô hiệu hóa fast_executemany với bảng có cột VARCHAR/NVARCHAR(MAX).
-            stg_cursor.fast_executemany = False
 
-            # 4. Đẩy dữ liệu theo lô (Chunking) để không tràn RAM
-            chunk_size = 1000
+            # 6. Đẩy dữ liệu theo lô (Chunking) để không tràn RAM
             total_rows = 0
 
             while True:
@@ -107,8 +121,8 @@ class DimensionLoader(BaseLoader):
                 if not rows:
                     break
 
-                # Chuyển đổi pyodbc.Row thành tuple để executemany có thể xử lý
-                data_chunk = [tuple(row) for row in rows]
+                # Tiêm dữ liệu Tenant (Tenant Injection)
+                data_chunk = [tuple(row) + tenant_values for row in rows]
                 stg_cursor.executemany(insert_sql, data_chunk)
                 connection.commit()
 

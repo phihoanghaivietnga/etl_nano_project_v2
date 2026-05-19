@@ -661,3 +661,47 @@
   - `docs/prompts/20260518_1640_sync_log_full_load_v7.md`
 - Bao gồm:
   - đúng 10 dòng code thể hiện thay đổi cấu hình cursor và `chunk_size` trong `_copy_prod_to_ods`.
+
+## Phạm vi cập nhật theo yêu cầu 20260518_1720_change_chunk_size_table_yaml_v1
+- Tạo mới `config/tables.yaml`
+- Cập nhật `src/jobs/sync_orchestrator.py`
+- Cập nhật `src/jobs/dimension_loader.py`
+- Cập nhật `pyproject.toml`
+- Cập nhật `PROJECT_CHRONICLE.md`
+- Cập nhật `docs/knowledge/GEM_CODE_MAP.md`
+- Cập nhật `docs/knowledge/GEM_AUTO_PIPELINE.md`
+- Cập nhật `docs/prompts/20260518_1720_change_chunk_size_table_yaml_v1.md`
+- Cập nhật `REPORT_CHANGES.md`
+
+## Nội dung đã thực hiện
+
+### 1) Thiết lập YAML Configuration Matrix (ADR-19)
+- Tạo file `config/tables.yaml` với cấu trúc:
+  - `etl_settings.odbc_chunk_size`
+  - `etl_settings.active_facilities`
+  - `facilities.<facility>.{nguon_dulieu_key, co_so_key, staging_schema}`
+- `SyncOrchestrator` bỏ đọc `ACTIVE_FACILITIES` từ `.env`, chuyển sang đọc từ YAML.
+
+### 2) Tenant Injection trong DimensionLoader (ADR-20)
+- `_copy_prod_to_ods` đọc `odbc_chunk_size` từ YAML.
+- `_copy_prod_to_ods` đọc `nguon_dulieu_key` và `co_so_key` theo `facility_code` từ YAML.
+- Mở rộng cột target bằng 3 cột tenant:
+  - `NguonDuLieuKey`, `CoSoKey`, `MaCoSo`.
+- Biến đổi dữ liệu chunk theo chuẩn:
+  - `data_chunk = [tuple(row) + tenant_values for row in rows]`.
+
+### 3) Cập nhật phụ thuộc runtime
+- Bổ sung dependency `pyyaml>=6.0.2` trong `pyproject.toml`.
+
+### 4) Cập nhật tri thức bắt buộc
+- `PROJECT_CHRONICLE.md`: thêm ADR-19 và ADR-20.
+- `GEM_CODE_MAP.md`: cập nhật trách nhiệm mới của `_copy_prod_to_ods` (YAML chunk + YAML facility + tenant injection).
+- `GEM_AUTO_PIPELINE.md`: cập nhật hướng dẫn cấu hình vận hành tập trung qua `config/tables.yaml`.
+
+### 5) Cập nhật báo cáo prompt
+- Hoàn tất phần `# BÁO CÁO CỦA THỢ CODE` trong:
+  - `docs/prompts/20260518_1720_change_chunk_size_table_yaml_v1.md`
+- Bao gồm:
+  - đoạn xử lý đọc YAML ở `sync_orchestrator.py`
+  - vòng lặp `while True` đã sửa trong `dimension_loader.py`
+  - trích dẫn nội dung đã cập nhật trong `GEM_CODE_MAP.md`.

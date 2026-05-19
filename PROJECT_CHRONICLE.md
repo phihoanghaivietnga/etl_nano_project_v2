@@ -222,3 +222,29 @@
 - **Bài học kinh nghiệm**:
   - Với schema có cột MAX, cần xem `fast_executemany` là tính năng có điều kiện, không bật mặc định.
   - Chunking nhỏ hơn là chi phí hiệu năng cần chấp nhận để đảm bảo an toàn bộ nhớ tuyệt đối.
+
+### ADR-19: Chuyển ma trận vận hành Multi-tenant sang `config/tables.yaml`
+- **Bối cảnh**:
+  - Quản trị danh sách cơ sở chạy và tham số chunk bằng `.env` trở nên rời rạc, khó mở rộng khi vận hành đa cơ sở.
+- **Quyết định**:
+  - Chuyển cấu hình vận hành sang `config/tables.yaml` theo 2 khối:
+    - `etl_settings`: chứa `odbc_chunk_size`, `active_facilities`.
+    - `facilities`: chứa ma trận định danh và schema theo từng `facility_code`.
+- **Triển khai**:
+  - `SyncOrchestrator` bỏ đọc `ACTIVE_FACILITIES` từ môi trường, chuyển sang đọc `etl_settings.active_facilities` từ YAML.
+  - Registry facility được build động từ node `facilities` trong YAML.
+
+### ADR-20: Tenant Injection trong `DimensionLoader` để chống NULL định danh cơ sở
+- **Sự cố nghiệp vụ**:
+  - Dữ liệu Production mang tính single-tenant, thiếu cột định danh cơ sở khi đẩy lên cấu trúc multi-tenant ở ODS/Datamart.
+  - Hệ thống phát sinh lỗi kiểu `Cannot insert the value NULL` cho các cột định danh.
+- **Quyết định kỹ thuật**:
+  - Tại `_copy_prod_to_ods`, đọc `nguon_dulieu_key` và `co_so_key` từ `config/tables.yaml` theo `facility_code`.
+  - Tiêm thêm 3 cột tenant vào payload insert:
+    - `NguonDuLieuKey`
+    - `CoSoKey`
+    - `MaCoSo`
+- **Thực thi**:
+  - Mở rộng danh sách cột đích: `target_columns = prod_columns + [NguonDuLieuKey, CoSoKey, MaCoSo]`.
+  - Mở rộng dữ liệu mỗi dòng trên RAM: `tuple(row) + tenant_values`.
+  - Đồng thời đọc `odbc_chunk_size` trực tiếp từ YAML để đồng bộ tham số vận hành.

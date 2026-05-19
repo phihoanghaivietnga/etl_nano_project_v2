@@ -2158,6 +2158,7 @@ from pathlib import Path
 from typing import Any
 
 import pyodbc
+import yaml
 
 from src.core.base_loader import BaseLoader
 
@@ -2239,19 +2240,32 @@ class DimensionLoader(BaseLoader):
             query = f"SELECT * FROM dbo.[{table_name}] WITH (NOLOCK)"
             prod_cursor.execute(query)
 
-            # Lấy danh sách cột để sinh câu lệnh INSERT động
-            columns = [column[0] for column in prod_cursor.description]
-            col_names_str = ", ".join([f"[{c}]" for c in columns])
-            placeholders = ", ".join(["?"] * len(columns))
+            prod_columns = [column[0] for column in prod_cursor.description]
+
+            # 3. Đọc YAML Config
+            yaml_path = Path("config/tables.yaml")
+            with yaml_path.open("r", encoding="utf-8") as stream:
+                config_data = yaml.safe_load(stream) or {}
+
+            # Đọc chunk_size và thông tin facility từ YAML
+            chunk_size = int(config_data.get("etl_settings", {}).get("odbc_chunk_size", 2000))
+            facility_config = config_data.get("facilities", {}).get(self.facility_code, {})
+            current_nguon_key = int(facility_config.get("nguon_dulieu_key", self.nguon_dulieu_key))
+            current_coso_key = int(facility_config.get("co_so_key", self.co_so_key))
+
+            # 4. Chuẩn bị Tenant Injection
+            tenant_columns = ["NguonDuLieuKey", "CoSoKey", "MaCoSo"]
+            target_columns = prod_columns + tenant_columns
+            tenant_values = (current_nguon_key, current_coso_key, self.facility_code)
+
+            # 5. Build câu lệnh INSERT động
+            col_names_str = ", ".join([f"[{c}]" for c in target_columns])
+            placeholders = ", ".join(["?"] * len(target_columns))
             insert_sql = f"INSERT INTO [{self.facility_schema}].[{table_name}] ({col_names_str}) VALUES ({placeholders})"
 
-            # 3. Chuẩn bị Cursor cho Staging với fast_executemany
             stg_cursor = connection.cursor()
-            # Hotfix MemoryError: vô hiệu hóa fast_executemany với bảng có cột VARCHAR/NVARCHAR(MAX).
-            stg_cursor.fast_executemany = False
 
-            # 4. Đẩy dữ liệu theo lô (Chunking) để không tràn RAM
-            chunk_size = 1000
+            # 6. Đẩy dữ liệu theo lô (Chunking) để không tràn RAM
             total_rows = 0
 
             while True:
@@ -2259,8 +2273,8 @@ class DimensionLoader(BaseLoader):
                 if not rows:
                     break
 
-                # Chuyển đổi pyodbc.Row thành tuple để executemany có thể xử lý
-                data_chunk = [tuple(row) for row in rows]
+                # Tiêm dữ liệu Tenant (Tenant Injection)
+                data_chunk = [tuple(row) + tenant_values for row in rows]
                 stg_cursor.executemany(insert_sql, data_chunk)
                 connection.commit()
 
@@ -2783,6 +2797,9 @@ import argparse
 import os
 from dataclasses import dataclass
 from datetime import date
+from pathlib import Path
+
+import yaml
 
 from dotenv import load_dotenv
 
@@ -2795,60 +2812,68 @@ class FacilityDefinition:
     code: str
     prod_env_key: str
     schema_name: str
-    nguon_dulieu_env_key: str
-    co_so_env_key: str
-    default_nguon_dulieu_key: int
-    default_co_so_key: int
 
 
 class SyncOrchestrator:
     def __init__(
         self,
         datamart_env_key: str = "DATAMART_CONNECTION_STRING",
-        active_facilities_env_key: str = "ACTIVE_FACILITIES",
+        tables_config_path: str = "config/tables.yaml",
     ) -> None:
         load_dotenv("config/.env", override=False)
         self.datamart_env_key = datamart_env_key
-        self.active_facilities_env_key = active_facilities_env_key
+        self.tables_config_path = Path(tables_config_path)
+        self.tables_config = self._load_tables_config()
+        self.facility_registry = self._build_facility_registry()
 
-        self.facility_registry: dict[str, FacilityDefinition] = {
-            "hanoi": FacilityDefinition(
-                code="hanoi",
-                prod_env_key="PROD_CONNECTION_HANOI",
-                schema_name="hanoi_hisnano_v2",
-                nguon_dulieu_env_key="NGUON_DULIEU_KEY_HANOI",
-                co_so_env_key="CO_SO_KEY_HANOI",
-                default_nguon_dulieu_key=2,
-                default_co_so_key=1,
-            ),
-            "hcm": FacilityDefinition(
-                code="hcm",
-                prod_env_key="PROD_CONNECTION_HCM",
-                schema_name="hcm_hisnano_v2",
-                nguon_dulieu_env_key="NGUON_DULIEU_KEY_HCM",
-                co_so_env_key="CO_SO_KEY_HCM",
-                default_nguon_dulieu_key=3,
-                default_co_so_key=2,
-            ),
-            "halong": FacilityDefinition(
-                code="halong",
-                prod_env_key="PROD_CONNECTION_HALONG",
-                schema_name="halong_hisnano_v2",
-                nguon_dulieu_env_key="NGUON_DULIEU_KEY_HALONG",
-                co_so_env_key="CO_SO_KEY_HALONG",
-                default_nguon_dulieu_key=4,
-                default_co_so_key=3,
-            ),
-            "haiphong": FacilityDefinition(
-                code="haiphong",
-                prod_env_key="PROD_CONNECTION_HAIPHONG",
-                schema_name="haiphong_hisnano_v2",
-                nguon_dulieu_env_key="NGUON_DULIEU_KEY_HAIPHONG",
-                co_so_env_key="CO_SO_KEY_HAIPHONG",
-                default_nguon_dulieu_key=5,
-                default_co_so_key=4,
-            ),
-        }
+    def _load_tables_config(self) -> dict:
+        if not self.tables_config_path.exists():
+            raise FileNotFoundError(f"Không tìm thấy file cấu hình YAML: {self.tables_config_path}")
+        with self.tables_config_path.open("r", encoding="utf-8") as stream:
+            data = yaml.safe_load(stream) or {}
+        return data
+
+    def _build_facility_registry(self) -> dict[str, FacilityDefinition]:
+        facilities_cfg = self.tables_config.get("facilities", {})
+        registry: dict[str, FacilityDefinition] = {}
+
+        for facility_code, cfg in facilities_cfg.items():
+            normalized = str(facility_code).strip().lower()
+            if not normalized:
+                continue
+            schema_name = str(cfg.get("staging_schema", "")).strip()
+            if not schema_name:
+                raise ValueError(f"Thiếu staging_schema cho facility '{normalized}' trong {self.tables_config_path}")
+
+            registry[normalized] = FacilityDefinition(
+                code=normalized,
+                prod_env_key=f"PROD_CONNECTION_{normalized.upper()}",
+                schema_name=schema_name,
+            )
+
+        if not registry:
+            raise ValueError(f"Không có facility hợp lệ trong file {self.tables_config_path}")
+
+        return registry
+
+    def _get_facility_yaml_config(self, facility_code: str) -> dict:
+        facilities_cfg = self.tables_config.get("facilities", {})
+        facility_cfg = facilities_cfg.get(facility_code, {})
+        if not facility_cfg:
+            raise ValueError(f"Không tìm thấy cấu hình facility '{facility_code}' trong {self.tables_config_path}")
+        return facility_cfg
+
+    def _resolve_facility_keys_from_yaml(self, facility_code: str) -> tuple[int, int]:
+        facility_cfg = self._get_facility_yaml_config(facility_code)
+        try:
+            nguon_key = int(facility_cfg.get("nguon_dulieu_key", -1))
+            co_so_key = int(facility_cfg.get("co_so_key", -1))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"nguon_dulieu_key/co_so_key của facility '{facility_code}' phải là số nguyên"
+            ) from exc
+
+        return nguon_key, co_so_key
 
     @staticmethod
     def _parse_facility_tokens(raw_value: str) -> list[str]:
@@ -2861,25 +2886,17 @@ class SyncOrchestrator:
                 return list(self.facility_registry.keys())
             return normalized
 
-        env_value = os.getenv(self.active_facilities_env_key, "ALL").strip()
-        if not env_value or env_value.upper() == "ALL":
+        yaml_facilities = self.tables_config.get("etl_settings", {}).get("active_facilities", [])
+        if not yaml_facilities:
             return list(self.facility_registry.keys())
-        return self._parse_facility_tokens(env_value)
+        normalized = [str(facility).strip().lower() for facility in yaml_facilities if str(facility).strip()]
+        return normalized or list(self.facility_registry.keys())
 
     def _validate_target_facilities(self, facilities: list[str]) -> None:
         unknown = [facility for facility in facilities if facility not in self.facility_registry]
         if unknown:
             valid = ", ".join(self.facility_registry.keys())
             raise ValueError(f"Facility không hợp lệ: {unknown}. Danh sách hợp lệ: {valid}")
-
-    def _resolve_facility_key(self, env_key: str, fallback: int) -> int:
-        raw = os.getenv(env_key, "").strip()
-        if not raw:
-            return fallback
-        try:
-            return int(raw)
-        except ValueError as exc:
-            raise ValueError(f"Biến {env_key} phải là số nguyên, đang nhận '{raw}'") from exc
 
     def _build_dimension_loader(
         self,
@@ -2942,14 +2959,7 @@ class SyncOrchestrator:
                 print(f"[SyncOrchestrator] Bỏ qua {facility.code} vì thiếu {facility.prod_env_key}")
                 continue
 
-            nguon_dulieu_key = self._resolve_facility_key(
-                facility.nguon_dulieu_env_key,
-                facility.default_nguon_dulieu_key,
-            )
-            co_so_key = self._resolve_facility_key(
-                facility.co_so_env_key,
-                facility.default_co_so_key,
-            )
+            nguon_dulieu_key, co_so_key = self._resolve_facility_keys_from_yaml(facility.code)
 
             print(f"[SyncOrchestrator] Bắt đầu facility={facility.code}")
             try:

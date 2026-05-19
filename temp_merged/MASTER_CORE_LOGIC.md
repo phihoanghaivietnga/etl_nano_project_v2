@@ -6,6 +6,7 @@
   [DESCRIPTION]: Core logic, configuration, and environment settings
 
 ### config/.env.example - Thành phần lõi và cấu hình nền tảng của hệ thống ETL
+### config/tables.yaml - Thành phần lõi và cấu hình nền tảng của hệ thống ETL
 ### src/core/base_loader.py - Thành phần lõi và cấu hình nền tảng của hệ thống ETL
 ### src/core/base_ui.py - Thành phần lõi và cấu hình nền tảng của hệ thống ETL
 
@@ -100,6 +101,20 @@ API_PORT=9001
 
 # API URL (duong dan day du cho UI goi toi)
 API_URL=http://localhost:9001
+```
+
+### SOURCE: config/tables.yaml
+```yaml
+etl_settings:
+  odbc_chunk_size: 5000
+  active_facilities:
+    - hanoi
+
+facilities:
+  hanoi:
+    nguon_dulieu_key: 2
+    co_so_key: 1
+    staging_schema: hanoi_hisnano_v2
 ```
 
 ### SOURCE: src/core/base_loader.py
