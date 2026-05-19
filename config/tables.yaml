@@ -3,6 +3,127 @@ etl_settings:
   active_facilities:
     - hanoi
 
+incremental_tables:
+  ThuPhiDichVu:
+    type: fact
+    date_column: NgayDenKham
+    merge_script: src/db/templates/sql/fact/merge_fact_thuphichvu_3in1.sql
+    # Mục đích: Định nghĩa số ngày tua ngược cửa sổ incremental để tránh sót dữ liệu đến trễ.
+    # Khi dùng: Dùng cho bảng phát sinh có khả năng điều chỉnh/hạch toán lại trong các ngày gần đây.
+    # Giá trị hợp lệ: int >= 0.
+    # Ý nghĩa: 0 = chỉ nạp đúng from_date; N > 0 = dịch lùi from_date thêm N ngày trước khi lọc.
+    lookback_days: 1
+    # Mục đích: Loại các cột có kiểu dữ liệu đặc biệt gây rủi ro BCP/không cần cho downstream.
+    # Khi dùng: Dùng khi bảng nguồn chứa cột binary/blob/xml/text lớn hoặc kiểu không tương thích.
+    # Giá trị hợp lệ: list[string], mỗi phần tử là DATA_TYPE trong INFORMATION_SCHEMA.COLUMNS.
+    # Ý nghĩa: Cột nào có DATA_TYPE thuộc danh sách này sẽ bị loại khỏi dynamic SELECT.
+    exclude_datatypes:
+      - image
+      - text
+      - ntext
+      - sql_variant
+      - xml
+
+  ThuPhiBaoHiem:
+    type: fact
+    date_column: NgayDenKham
+    merge_script: src/db/templates/sql/fact/merge_fact_thuphichvu_3in1.sql
+    # Mục đích: Định nghĩa số ngày tua ngược cửa sổ incremental để tránh sót dữ liệu đến trễ.
+    # Khi dùng: Dùng cho bảng phát sinh có khả năng điều chỉnh/hạch toán lại trong các ngày gần đây.
+    # Giá trị hợp lệ: int >= 0.
+    # Ý nghĩa: 0 = chỉ nạp đúng from_date; N > 0 = dịch lùi from_date thêm N ngày trước khi lọc.
+    lookback_days: 1
+    # Mục đích: Loại các cột có kiểu dữ liệu đặc biệt gây rủi ro BCP/không cần cho downstream.
+    # Khi dùng: Dùng khi bảng nguồn chứa cột binary/blob/xml/text lớn hoặc kiểu không tương thích.
+    # Giá trị hợp lệ: list[string], mỗi phần tử là DATA_TYPE trong INFORMATION_SCHEMA.COLUMNS.
+    # Ý nghĩa: Cột nào có DATA_TYPE thuộc danh sách này sẽ bị loại khỏi dynamic SELECT.
+    exclude_datatypes:
+      - image
+      - text
+      - ntext
+      - sql_variant
+      - xml
+
+  ThuPhiTangGiam:
+    type: fact
+    date_column: NgayDenKham
+    merge_script: src/db/templates/sql/fact/merge_fact_thuphichvu_3in1.sql
+    # Mục đích: Định nghĩa số ngày tua ngược cửa sổ incremental để tránh sót dữ liệu đến trễ.
+    # Khi dùng: Dùng cho bảng phát sinh có khả năng điều chỉnh/hạch toán lại trong các ngày gần đây.
+    # Giá trị hợp lệ: int >= 0.
+    # Ý nghĩa: 0 = chỉ nạp đúng from_date; N > 0 = dịch lùi from_date thêm N ngày trước khi lọc.
+    lookback_days: 1
+    # Mục đích: Loại các cột có kiểu dữ liệu đặc biệt gây rủi ro BCP/không cần cho downstream.
+    # Khi dùng: Dùng khi bảng nguồn chứa cột binary/blob/xml/text lớn hoặc kiểu không tương thích.
+    # Giá trị hợp lệ: list[string], mỗi phần tử là DATA_TYPE trong INFORMATION_SCHEMA.COLUMNS.
+    # Ý nghĩa: Cột nào có DATA_TYPE thuộc danh sách này sẽ bị loại khỏi dynamic SELECT.
+    exclude_datatypes:
+      - image
+      - text
+      - ntext
+      - sql_variant
+      - xml
+
+  ThuPhiGoi:
+    type: fact
+    date_column: NgayThu
+    merge_script: src/db/templates/sql/fact/FactThuPhiDichVu_ThuPhiGoi_merge.sql
+    # Mục đích: Định nghĩa số ngày tua ngược cửa sổ incremental để tránh sót dữ liệu đến trễ.
+    # Khi dùng: Dùng cho bảng phát sinh có khả năng điều chỉnh/hạch toán lại trong các ngày gần đây.
+    # Giá trị hợp lệ: int >= 0.
+    # Ý nghĩa: 0 = chỉ nạp đúng from_date; N > 0 = dịch lùi from_date thêm N ngày trước khi lọc.
+    lookback_days: 1
+    # Mục đích: Loại các cột có kiểu dữ liệu đặc biệt gây rủi ro BCP/không cần cho downstream.
+    # Khi dùng: Dùng khi bảng nguồn chứa cột binary/blob/xml/text lớn hoặc kiểu không tương thích.
+    # Giá trị hợp lệ: list[string], mỗi phần tử là DATA_TYPE trong INFORMATION_SCHEMA.COLUMNS.
+    # Ý nghĩa: Cột nào có DATA_TYPE thuộc danh sách này sẽ bị loại khỏi dynamic SELECT.
+    exclude_datatypes:
+      - image
+      - text
+      - ntext
+      - sql_variant
+      - xml
+
+  DoThiLuc:
+    type: fact
+    date_column: NgayDo
+    merge_script: src/db/templates/sql/fact/FactDoThiLuc_merge.sql
+    # Mục đích: Định nghĩa số ngày tua ngược cửa sổ incremental để tránh sót dữ liệu đến trễ.
+    # Khi dùng: Dùng cho bảng phát sinh có khả năng điều chỉnh/hạch toán lại trong các ngày gần đây.
+    # Giá trị hợp lệ: int >= 0.
+    # Ý nghĩa: 0 = chỉ nạp đúng from_date; N > 0 = dịch lùi from_date thêm N ngày trước khi lọc.
+    lookback_days: 1
+    # Mục đích: Loại các cột có kiểu dữ liệu đặc biệt gây rủi ro BCP/không cần cho downstream.
+    # Khi dùng: Dùng khi bảng nguồn chứa cột binary/blob/xml/text lớn hoặc kiểu không tương thích.
+    # Giá trị hợp lệ: list[string], mỗi phần tử là DATA_TYPE trong INFORMATION_SCHEMA.COLUMNS.
+    # Ý nghĩa: Cột nào có DATA_TYPE thuộc danh sách này sẽ bị loại khỏi dynamic SELECT.
+    exclude_datatypes:
+      - image
+      - text
+      - ntext
+      - sql_variant
+      - xml
+
+  HoSoKhamBenhNgoaiTru:
+    type: fact
+    date_column: NgayVaoKham
+    merge_script: src/db/templates/sql/fact/DimLuotKham_merge.sql
+    # Mục đích: Định nghĩa số ngày tua ngược cửa sổ incremental để tránh sót dữ liệu đến trễ.
+    # Khi dùng: Dùng cho bảng phát sinh có khả năng điều chỉnh/hạch toán lại trong các ngày gần đây.
+    # Giá trị hợp lệ: int >= 0.
+    # Ý nghĩa: 0 = chỉ nạp đúng from_date; N > 0 = dịch lùi from_date thêm N ngày trước khi lọc.
+    lookback_days: 1
+    # Mục đích: Loại các cột có kiểu dữ liệu đặc biệt gây rủi ro BCP/không cần cho downstream.
+    # Khi dùng: Dùng khi bảng nguồn chứa cột binary/blob/xml/text lớn hoặc kiểu không tương thích.
+    # Giá trị hợp lệ: list[string], mỗi phần tử là DATA_TYPE trong INFORMATION_SCHEMA.COLUMNS.
+    # Ý nghĩa: Cột nào có DATA_TYPE thuộc danh sách này sẽ bị loại khỏi dynamic SELECT.
+    exclude_datatypes:
+      - image
+      - text
+      - ntext
+      - sql_variant
+      - xml
+
 facilities:
   hanoi:
     nguon_dulieu_key: 2

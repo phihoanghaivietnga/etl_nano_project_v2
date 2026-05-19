@@ -137,6 +137,7 @@ class SyncOrchestrator:
             facility_schema=facility.schema_name,
             nguon_dulieu_key=nguon_dulieu_key,
             co_so_key=co_so_key,
+            tables_config_path=str(self.tables_config_path),
         )
 
     def run(

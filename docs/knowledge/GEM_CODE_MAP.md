@@ -66,6 +66,33 @@
     - Áp dụng fallback seed key `-1` cho early arriving facts.
     - Dọn Landing ở đầu và cuối luồng để chống rò rỉ dữ liệu giữa facilities.
 
+#### Bổ sung theo yêu cầu 20260519_1315_sync_incremental_v1
+- Cấu phần lõi mới cho incremental động:
+  - `src/core/base_extractor.py`
+  - Chức năng chính:
+    - `ExtractPlan`: DTO mô tả kế hoạch extract (`table_name`, `date_column`, `effective_from_date`, `to_date`, `select_sql`, `selected_columns`).
+    - `BaseExtractor.normalize_date(...)`: chuẩn hóa input ngày (`date`, `datetime`, `YYYY-MM-DD`).
+    - `BaseExtractor.compute_effective_from_date(...)`: áp dụng lookback động `from_date - lookback_days`.
+    - `BaseExtractor.build_dynamic_select_columns(...)`: đọc metadata từ `INFORMATION_SCHEMA.COLUMNS`, tự loại cột theo `exclude_datatypes`.
+    - `BaseExtractor.build_select_sql(...)`: sinh Dynamic SELECT theo danh sách cột còn hợp lệ và cửa sổ ngày.
+- Tái cấu trúc `src/jobs/fact_loader.py` theo ma trận YAML:
+  - Đọc node `incremental_tables` từ `config/tables.yaml` thành `FactTableSpec`.
+  - Bỏ hardcode danh sách bảng fact, chuyển sang cấu hình động theo từng bảng.
+  - Luồng 3 tầng chuẩn hóa:
+    1. Tầng 1: `TRUNCATE` global landing `stg_nano_v2` + BCP `-w`.
+    2. Tầng 2: MERGE từ landing sang facility staging, không dùng `TRUNCATE`.
+    3. Tầng 3: thực thi SQL template có sẵn qua `merge_script`, không sửa file SQL template.
+  - Bổ sung chốt chống treo lock:
+    - Sau `TRUNCATE` landing có `connection.commit()` ngay để tránh lock chờ giữa `pyodbc` session và tiến trình BCP IN.
+- Cập nhật điều phối:
+  - `src/jobs/sync_orchestrator.py` truyền `tables_config_path` vào `FactLoader` để đồng bộ cùng một nguồn cấu hình YAML.
+- Mở rộng cấu hình:
+  - `config/tables.yaml` có node `incremental_tables` cho các bảng:
+    - `ThuPhiDichVu`, `ThuPhiBaoHiem`, `ThuPhiTangGiam` (date: `NgayDenKham`)
+    - `ThuPhiGoi` (date: `NgayThu`)
+    - `DoThiLuc` (date: `NgayDo`)
+    - `HoSoKhamBenhNgoaiTru` (date: `NgayVaoKham`, type `fact`, merge `DimLuotKham_merge.sql`)
+
 ### Nhóm INTERFACE
 - Phạm vi:
   - `/src/ui/`

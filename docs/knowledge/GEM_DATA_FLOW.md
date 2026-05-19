@@ -14,7 +14,8 @@
 ## Luồng chuẩn cho Fact (INCREMENTAL - 3-Hop)
 1. **Prod -> Landing (`stg_nano_v2`)**
    - TRUNCATE bảng Landing tương ứng.
-   - Nạp delta theo cửa sổ trượt `Lookback = D-3` bằng `bcp -w`.
+   - Nạp delta theo cửa sổ trượt `Lookback = from_date - lookback_days` bằng `bcp -w`.
+   - Dynamic SELECT phải đọc metadata cột từ `INFORMATION_SCHEMA.COLUMNS` và loại cột theo `exclude_datatypes` trước khi extract.
 2. **Landing -> ODS cơ sở**
    - MERGE từ `stg_nano_v2` sang `<facility_schema>`.
    - Hard delete bắt buộc có chặn thời gian:
@@ -40,6 +41,15 @@
   - `ISNULL(BenhNhanKey, -1)`
   - `ISNULL(DichVuKey, -1)`.
 
+## Mapping cột ngày cho incremental_tables
+- `ThuPhiDichVu` -> `NgayDenKham`
+- `ThuPhiBaoHiem` -> `NgayDenKham`
+- `ThuPhiTangGiam` -> `NgayDenKham`
+- `ThuPhiGoi` -> `NgayThu`
+- `DoThiLuc` -> `NgayDo`
+- `HoSoKhamBenhNgoaiTru` -> `NgayVaoKham`
+
 ## Quy tắc an toàn Landing dùng chung
 - Luôn TRUNCATE Landing ở đầu luồng.
-- Luôn TRUNCATE Landing ở cuối luồng (`finally`) để không rò rỉ dữ liệu giữa các cơ sở chạy tuần tự.
+- Sau TRUNCATE Landing phải commit ngay để giải phóng lock trước khi BCP IN bằng session khác.
+- Luồng hiện tại chạy tuần tự từng bảng fact trong cùng facility, không dùng TRUNCATE ở tầng Facility Historical Staging.

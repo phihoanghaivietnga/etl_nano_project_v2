@@ -248,3 +248,37 @@
   - Mở rộng danh sách cột đích: `target_columns = prod_columns + [NguonDuLieuKey, CoSoKey, MaCoSo]`.
   - Mở rộng dữ liệu mỗi dòng trên RAM: `tuple(row) + tenant_values`.
   - Đồng thời đọc `odbc_chunk_size` trực tiếp từ YAML để đồng bộ tham số vận hành.
+
+## 2026-05-19: Tái cấu trúc Incremental động cho Fact theo YAML
+
+### ADR-21: Tách lớp lõi Extractor và chuyển incremental sang cấu hình động
+- **Bối cảnh**:
+  - Luồng incremental trước đó hardcode danh sách bảng/cột ngày và thiếu cơ chế loại cột theo kiểu dữ liệu.
+  - Yêu cầu vận hành mới cần mở rộng bảng incremental theo cấu hình, không chỉnh sửa code lõi mỗi lần thêm bảng.
+- **Quyết định kỹ thuật**:
+  - Tạo mới `src/core/base_extractor.py` với class `BaseExtractor` và DTO `ExtractPlan`.
+  - Chuẩn hóa xử lý ngày theo công thức:
+    - `effective_from_date = from_date - lookback_days`.
+  - Áp dụng Dynamic SELECT dựa trên `INFORMATION_SCHEMA.COLUMNS` và `exclude_datatypes` từ YAML.
+  - Refactor `FactLoader` để đọc toàn bộ `incremental_tables` trong `config/tables.yaml` thành `FactTableSpec`.
+  - Giữ nguyên nguyên tắc Datamart:
+    - chỉ render placeholder và thực thi SQL template có sẵn,
+    - không chỉnh sửa nội dung file SQL template.
+- **Module bị ảnh hưởng**:
+  - `config/tables.yaml`
+  - `src/core/base_extractor.py` (mới)
+  - `src/jobs/fact_loader.py`
+  - `src/jobs/sync_orchestrator.py`
+  - `docs/knowledge/GEM_CODE_MAP.md`
+  - `docs/knowledge/GEM_DATA_FLOW.md`
+  - `docs/knowledge/GEM_TECHNICAL_STANDARDS.md`
+
+### ADR-22: Hotfix chống treo lock ở tầng Landing khi phối hợp pyodbc và BCP
+- **Sự cố**:
+  - Có nguy cơ treo dài khi `TRUNCATE` Landing xong nhưng transaction chưa commit, trong khi BCP IN chạy ở session khác.
+- **Nguyên nhân gốc**:
+  - Lock từ câu lệnh `TRUNCATE` còn giữ trên session `pyodbc`, khiến tiến trình BCP chờ lock.
+- **Bản vá**:
+  - Trong `FactLoader._truncate_table(...)`, thêm `connection.commit()` ngay sau khi thực thi `TRUNCATE`.
+- **Kết quả**:
+  - Giải phóng lock sớm giữa các chặng, giảm nguy cơ treo pipeline incremental khi nạp qua BCP.

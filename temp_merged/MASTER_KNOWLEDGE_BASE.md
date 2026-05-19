@@ -275,6 +275,40 @@
   - Mở rộng danh sách cột đích: `target_columns = prod_columns + [NguonDuLieuKey, CoSoKey, MaCoSo]`.
   - Mở rộng dữ liệu mỗi dòng trên RAM: `tuple(row) + tenant_values`.
   - Đồng thời đọc `odbc_chunk_size` trực tiếp từ YAML để đồng bộ tham số vận hành.
+
+## 2026-05-19: Tái cấu trúc Incremental động cho Fact theo YAML
+
+### ADR-21: Tách lớp lõi Extractor và chuyển incremental sang cấu hình động
+- **Bối cảnh**:
+  - Luồng incremental trước đó hardcode danh sách bảng/cột ngày và thiếu cơ chế loại cột theo kiểu dữ liệu.
+  - Yêu cầu vận hành mới cần mở rộng bảng incremental theo cấu hình, không chỉnh sửa code lõi mỗi lần thêm bảng.
+- **Quyết định kỹ thuật**:
+  - Tạo mới `src/core/base_extractor.py` với class `BaseExtractor` và DTO `ExtractPlan`.
+  - Chuẩn hóa xử lý ngày theo công thức:
+    - `effective_from_date = from_date - lookback_days`.
+  - Áp dụng Dynamic SELECT dựa trên `INFORMATION_SCHEMA.COLUMNS` và `exclude_datatypes` từ YAML.
+  - Refactor `FactLoader` để đọc toàn bộ `incremental_tables` trong `config/tables.yaml` thành `FactTableSpec`.
+  - Giữ nguyên nguyên tắc Datamart:
+    - chỉ render placeholder và thực thi SQL template có sẵn,
+    - không chỉnh sửa nội dung file SQL template.
+- **Module bị ảnh hưởng**:
+  - `config/tables.yaml`
+  - `src/core/base_extractor.py` (mới)
+  - `src/jobs/fact_loader.py`
+  - `src/jobs/sync_orchestrator.py`
+  - `docs/knowledge/GEM_CODE_MAP.md`
+  - `docs/knowledge/GEM_DATA_FLOW.md`
+  - `docs/knowledge/GEM_TECHNICAL_STANDARDS.md`
+
+### ADR-22: Hotfix chống treo lock ở tầng Landing khi phối hợp pyodbc và BCP
+- **Sự cố**:
+  - Có nguy cơ treo dài khi `TRUNCATE` Landing xong nhưng transaction chưa commit, trong khi BCP IN chạy ở session khác.
+- **Nguyên nhân gốc**:
+  - Lock từ câu lệnh `TRUNCATE` còn giữ trên session `pyodbc`, khiến tiến trình BCP chờ lock.
+- **Bản vá**:
+  - Trong `FactLoader._truncate_table(...)`, thêm `connection.commit()` ngay sau khi thực thi `TRUNCATE`.
+- **Kết quả**:
+  - Giải phóng lock sớm giữa các chặng, giảm nguy cơ treo pipeline incremental khi nạp qua BCP.
 ```
 
 ### SOURCE: README.md
@@ -524,6 +558,33 @@ ETL_Nano_Project_V2/
     - Áp dụng fallback seed key `-1` cho early arriving facts.
     - Dọn Landing ở đầu và cuối luồng để chống rò rỉ dữ liệu giữa facilities.
 
+#### Bổ sung theo yêu cầu 20260519_1315_sync_incremental_v1
+- Cấu phần lõi mới cho incremental động:
+  - `src/core/base_extractor.py`
+  - Chức năng chính:
+    - `ExtractPlan`: DTO mô tả kế hoạch extract (`table_name`, `date_column`, `effective_from_date`, `to_date`, `select_sql`, `selected_columns`).
+    - `BaseExtractor.normalize_date(...)`: chuẩn hóa input ngày (`date`, `datetime`, `YYYY-MM-DD`).
+    - `BaseExtractor.compute_effective_from_date(...)`: áp dụng lookback động `from_date - lookback_days`.
+    - `BaseExtractor.build_dynamic_select_columns(...)`: đọc metadata từ `INFORMATION_SCHEMA.COLUMNS`, tự loại cột theo `exclude_datatypes`.
+    - `BaseExtractor.build_select_sql(...)`: sinh Dynamic SELECT theo danh sách cột còn hợp lệ và cửa sổ ngày.
+- Tái cấu trúc `src/jobs/fact_loader.py` theo ma trận YAML:
+  - Đọc node `incremental_tables` từ `config/tables.yaml` thành `FactTableSpec`.
+  - Bỏ hardcode danh sách bảng fact, chuyển sang cấu hình động theo từng bảng.
+  - Luồng 3 tầng chuẩn hóa:
+    1. Tầng 1: `TRUNCATE` global landing `stg_nano_v2` + BCP `-w`.
+    2. Tầng 2: MERGE từ landing sang facility staging, không dùng `TRUNCATE`.
+    3. Tầng 3: thực thi SQL template có sẵn qua `merge_script`, không sửa file SQL template.
+  - Bổ sung chốt chống treo lock:
+    - Sau `TRUNCATE` landing có `connection.commit()` ngay để tránh lock chờ giữa `pyodbc` session và tiến trình BCP IN.
+- Cập nhật điều phối:
+  - `src/jobs/sync_orchestrator.py` truyền `tables_config_path` vào `FactLoader` để đồng bộ cùng một nguồn cấu hình YAML.
+- Mở rộng cấu hình:
+  - `config/tables.yaml` có node `incremental_tables` cho các bảng:
+    - `ThuPhiDichVu`, `ThuPhiBaoHiem`, `ThuPhiTangGiam` (date: `NgayDenKham`)
+    - `ThuPhiGoi` (date: `NgayThu`)
+    - `DoThiLuc` (date: `NgayDo`)
+    - `HoSoKhamBenhNgoaiTru` (date: `NgayVaoKham`, type `fact`, merge `DimLuotKham_merge.sql`)
+
 ### Nhóm INTERFACE
 - Phạm vi:
   - `/src/ui/`
@@ -603,7 +664,8 @@ ETL_Nano_Project_V2/
 ## Luồng chuẩn cho Fact (INCREMENTAL - 3-Hop)
 1. **Prod -> Landing (`stg_nano_v2`)**
    - TRUNCATE bảng Landing tương ứng.
-   - Nạp delta theo cửa sổ trượt `Lookback = D-3` bằng `bcp -w`.
+   - Nạp delta theo cửa sổ trượt `Lookback = from_date - lookback_days` bằng `bcp -w`.
+   - Dynamic SELECT phải đọc metadata cột từ `INFORMATION_SCHEMA.COLUMNS` và loại cột theo `exclude_datatypes` trước khi extract.
 2. **Landing -> ODS cơ sở**
    - MERGE từ `stg_nano_v2` sang `<facility_schema>`.
    - Hard delete bắt buộc có chặn thời gian:
@@ -629,9 +691,18 @@ ETL_Nano_Project_V2/
   - `ISNULL(BenhNhanKey, -1)`
   - `ISNULL(DichVuKey, -1)`.
 
+## Mapping cột ngày cho incremental_tables
+- `ThuPhiDichVu` -> `NgayDenKham`
+- `ThuPhiBaoHiem` -> `NgayDenKham`
+- `ThuPhiTangGiam` -> `NgayDenKham`
+- `ThuPhiGoi` -> `NgayThu`
+- `DoThiLuc` -> `NgayDo`
+- `HoSoKhamBenhNgoaiTru` -> `NgayVaoKham`
+
 ## Quy tắc an toàn Landing dùng chung
 - Luôn TRUNCATE Landing ở đầu luồng.
-- Luôn TRUNCATE Landing ở cuối luồng (`finally`) để không rò rỉ dữ liệu giữa các cơ sở chạy tuần tự.
+- Sau TRUNCATE Landing phải commit ngay để giải phóng lock trước khi BCP IN bằng session khác.
+- Luồng hiện tại chạy tuần tự từng bảng fact trong cùng facility, không dùng TRUNCATE ở tầng Facility Historical Staging.
 ```
 
 ### SOURCE: docs/knowledge/GEM_DB_SCHEMAS.md
@@ -918,6 +989,43 @@ ETL_Nano_Project_V2/
 - Với `.md`: giữ cơ chế chuyển đổi sang Google Docs.
 - Với tệp khác (`.py`, `.sql`, `.yml`, `.yaml`, ...): upload dưới dạng tệp gốc.
 - Trước khi `update`, bắt buộc đối soát checksum MD5 và chỉ cập nhật khi sai khác.
+
+## Tiêu chuẩn kỹ thuật cho Incremental ETL động (Fact)
+
+### Chuẩn cấu hình `incremental_tables` trong `config/tables.yaml`
+- Mỗi bảng phải khai báo đầy đủ:
+  - `type: fact`
+  - `date_column`
+  - `merge_script`
+  - `lookback_days`
+  - `exclude_datatypes`
+- Bắt buộc viết block comment ngay phía trên biến `lookback_days` và `exclude_datatypes`.
+
+### Chuẩn xử lý ngày và cửa sổ incremental
+- `from_date` và `to_date` phải được chuẩn hóa về `date` trước khi sinh câu lệnh extract.
+- Cửa sổ lọc thực tế phải dùng:
+  - `effective_from_date = from_date - lookback_days`
+- `lookback_days` bắt buộc là số nguyên `>= 0`; nếu âm phải raise lỗi cấu hình.
+
+### Chuẩn Dynamic SELECT theo metadata cột
+- Phải truy vấn `INFORMATION_SCHEMA.COLUMNS` tại nguồn để lấy danh sách cột theo thứ tự `ORDINAL_POSITION`.
+- Nếu có `exclude_datatypes`, phải loại cột theo `DATA_TYPE` trước khi sinh SELECT.
+- Nếu sau loại trừ không còn cột hợp lệ, phải dừng job và báo lỗi rõ tên bảng.
+
+### Chuẩn thực thi Staging 3 tầng
+- Tầng 1 Global Landing (`stg_nano_v2`):
+  - Cho phép `TRUNCATE` + BCP IN/OUT.
+  - Sau `TRUNCATE` phải `commit` ngay để tránh lock chờ khi BCP chạy ở session khác.
+- Tầng 2 Facility Historical Staging:
+  - Chỉ cho phép UPSERT/MERGE.
+  - Nghiêm cấm `TRUNCATE`.
+- Tầng 3 Datamart (`dm`):
+  - Chỉ đọc và thực thi SQL template có sẵn trong `src/db/templates/sql/fact/` và `src/db/templates/sql/dimension/`.
+  - Không chỉnh sửa nội dung SQL template trong task incremental.
+
+### Chuẩn giao tiếp cơ sở dữ liệu và bảo toàn dữ liệu tiếng Việt
+- Khi dùng BCP bắt buộc cờ `-w` (UTF-16-LE).
+- Giữ nguyên nội dung Unicode tiếng Việt trong dữ liệu y tế, không chuyển mã thủ công.
 ```
 
 ### SOURCE: docs/knowledge/loop_Gem_Github_GoogleDrive_NotebookLM.md

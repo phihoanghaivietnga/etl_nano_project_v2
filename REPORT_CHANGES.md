@@ -705,3 +705,57 @@
   - đoạn xử lý đọc YAML ở `sync_orchestrator.py`
   - vòng lặp `while True` đã sửa trong `dimension_loader.py`
   - trích dẫn nội dung đã cập nhật trong `GEM_CODE_MAP.md`.
+
+## Phạm vi cập nhật theo yêu cầu 20260519_1315_sync_incremental_v1
+- Tạo mới `src/core/base_extractor.py`
+- Cập nhật `src/jobs/fact_loader.py`
+- Cập nhật `src/jobs/sync_orchestrator.py`
+- Cập nhật `config/tables.yaml`
+- Cập nhật `docs/knowledge/GEM_CODE_MAP.md`
+- Cập nhật `docs/knowledge/GEM_DATA_FLOW.md`
+- Cập nhật `docs/knowledge/GEM_TECHNICAL_STANDARDS.md`
+- Cập nhật `PROJECT_CHRONICLE.md`
+- Cập nhật `docs/prompts/20260519_1315_sync_incremental_v1.md`
+- Cập nhật `REPORT_CHANGES.md`
+
+## Nội dung đã thực hiện
+
+### 1) Tái cấu trúc lõi incremental theo OOP và YAML động
+- Tạo `BaseExtractor` mới tại `src/core/base_extractor.py` với các năng lực:
+  - Chuẩn hóa `from_date`/`to_date`.
+  - Tính `effective_from_date = from_date - lookback_days`.
+  - Sinh Dynamic SELECT theo metadata cột từ `INFORMATION_SCHEMA.COLUMNS`.
+  - Loại cột theo `exclude_datatypes` trước khi extract.
+- Refactor `FactLoader`:
+  - Đọc node `incremental_tables` từ `config/tables.yaml`.
+  - Dùng `FactTableSpec` để cấu hình động theo từng bảng.
+  - Giữ kiến trúc 3 tầng:
+    1. Global Landing (`stg_nano_v2`): `TRUNCATE` + BCP.
+    2. Facility Historical Staging: MERGE/UPSERT, không `TRUNCATE`.
+    3. Datamart `dm`: chỉ thực thi SQL template qua `merge_script`.
+
+### 2) Mở rộng cấu hình incremental_tables và comment chuẩn tài liệu
+- Bổ sung cấu hình cho các bảng:
+  - `ThuPhiDichVu`, `ThuPhiBaoHiem`, `ThuPhiTangGiam` dùng `NgayDenKham`.
+  - `ThuPhiGoi` dùng `NgayThu`.
+  - `DoThiLuc` dùng `NgayDo`.
+  - `HoSoKhamBenhNgoaiTru` dùng `NgayVaoKham`, `type: fact`, `merge_script: src/db/templates/sql/fact/DimLuotKham_merge.sql`.
+- Mỗi bảng đều có block comment mô tả cho `lookback_days` và `exclude_datatypes` đúng theo yêu cầu.
+
+### 3) Hotfix chống treo lock khi chạy BCP song song session
+- Bổ sung `connection.commit()` ngay sau `TRUNCATE` trong `FactLoader._truncate_table(...)`.
+- Mục tiêu: giải phóng lock sớm trước khi tiến trình BCP IN chạy ở session khác, giảm nguy cơ treo dài pipeline.
+
+### 4) Đồng bộ điều phối orchestrator
+- Cập nhật `SyncOrchestrator` truyền `tables_config_path` vào `FactLoader` để đảm bảo toàn bộ luồng đọc cùng một nguồn YAML.
+
+### 5) Cập nhật tri thức bắt buộc
+- `GEM_CODE_MAP.md`: thêm mô tả `BaseExtractor`, kiến trúc incremental động, và chốt commit sau TRUNCATE Landing.
+- `GEM_DATA_FLOW.md`: thêm mapping cột ngày theo `incremental_tables`, quy tắc dynamic select + exclude datatype, và quy tắc commit sau TRUNCATE Landing.
+- `GEM_TECHNICAL_STANDARDS.md`: thêm chuẩn kỹ thuật incremental động (lookback, dynamic select, staging 3 tầng, BCP UTF-16-LE).
+- `PROJECT_CHRONICLE.md`: ghi nhận ADR-21 (tái cấu trúc incremental động) và ADR-22 (hotfix lock).
+
+### 6) Kiểm tra nhanh chất lượng code
+- Chạy kiểm tra cú pháp toàn bộ source:
+  - `python -m compileall src`
+- Kết quả: compile thành công cho các module đã chỉnh sửa, không phát hiện lỗi cú pháp.
