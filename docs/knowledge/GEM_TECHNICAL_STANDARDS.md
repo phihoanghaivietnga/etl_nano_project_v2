@@ -61,8 +61,12 @@
 
 ### Chuẩn Dynamic SELECT theo metadata cột
 - Phải truy vấn `INFORMATION_SCHEMA.COLUMNS` tại nguồn để lấy danh sách cột theo thứ tự `ORDINAL_POSITION`.
-- Nếu có `exclude_datatypes`, phải loại cột theo `DATA_TYPE` trước khi sinh SELECT.
-- Nếu sau loại trừ không còn cột hợp lệ, phải dừng job và báo lỗi rõ tên bảng.
+- Nếu có `exclude_datatypes`, tuyệt đối không được loại cột khỏi projection.
+- Với cột thuộc `exclude_datatypes`, phải mask bằng biểu thức an toàn schema:
+  - `CAST(NULL AS VARCHAR(1)) AS [TenCot]` (ưu tiên)
+  - hoặc `NULL AS [TenCot]` nếu phù hợp ngữ cảnh.
+- Với cột không bị loại trừ, giữ nguyên `[TenCot]`.
+- Mục tiêu bắt buộc: số lượng và vị trí cột trong Dynamic SELECT phải khớp 100% với bảng đích để tránh `BCP Error 22005 (Schema Shift)`.
 
 ### Chuẩn thực thi Staging 3 tầng
 - Tầng 1 Global Landing (`stg_nano_v2`):
@@ -78,3 +82,9 @@
 ### Chuẩn giao tiếp cơ sở dữ liệu và bảo toàn dữ liệu tiếng Việt
 - Khi dùng BCP bắt buộc cờ `-w` (UTF-16-LE).
 - Giữ nguyên nội dung Unicode tiếng Việt trong dữ liệu y tế, không chuyển mã thủ công.
+
+### Chuẩn bảo mật logging kết nối
+- Nghiêm cấm log trực tiếp `connection_string`, password (`PWD`), token, secret hoặc full command có chứa thông tin xác thực.
+- Chỉ log thông điệp an toàn dạng ngữ cảnh vận hành, ví dụ:
+  - `Connected to Database [Ten_DB] at Server [Ten_Server] successfully`.
+- Với BCP/subprocess, phải ẩn nội dung query/command nếu có khả năng mang thông tin nhạy cảm.

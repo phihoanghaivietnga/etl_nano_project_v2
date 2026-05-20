@@ -14,6 +14,15 @@ class ExtractPlan:
     to_date: date
     select_sql: str
     selected_columns: tuple[str, ...]
+    projected_columns: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class DynamicColumnProjection:
+    column_name: str
+    data_type: str
+    select_expression: str
+    is_masked: bool
 
 
 class BaseExtractor:
@@ -48,7 +57,7 @@ class BaseExtractor:
         connection: pyodbc.Connection,
         table_name: str,
         exclude_datatypes: list[str] | tuple[str, ...] | None,
-    ) -> list[str]:
+    ) -> list[DynamicColumnProjection]:
         excluded = {dtype.strip().lower() for dtype in (exclude_datatypes or []) if str(dtype).strip()}
 
         sql = """
@@ -61,22 +70,40 @@ class BaseExtractor:
         cursor = connection.cursor()
         cursor.execute(sql, table_name)
 
-        selected: list[str] = []
+        selected: list[DynamicColumnProjection] = []
         for row in cursor.fetchall():
             column_name = str(row[0])
             data_type = str(row[1]).lower()
+
             if data_type in excluded:
+                select_expression = f"CAST(NULL AS VARCHAR(1)) AS [{column_name}]"
+                selected.append(
+                    DynamicColumnProjection(
+                        column_name=column_name,
+                        data_type=data_type,
+                        select_expression=select_expression,
+                        is_masked=True,
+                    )
+                )
                 continue
-            selected.append(column_name)
+
+            selected.append(
+                DynamicColumnProjection(
+                    column_name=column_name,
+                    data_type=data_type,
+                    select_expression=f"[{column_name}]",
+                    is_masked=False,
+                )
+            )
 
         if not selected:
-            raise ValueError(f"Không còn cột hợp lệ sau khi exclude_datatypes cho bảng {table_name}")
+            raise ValueError(f"Không tìm thấy metadata cột cho bảng {table_name}")
 
         return selected
 
     @staticmethod
-    def build_select_sql(table_name: str, date_column: str, columns: list[str], from_date: date, to_date: date) -> str:
-        projected = ", ".join([f"[{col}]" for col in columns])
+    def build_select_sql(table_name: str, date_column: str, projections: list[str], from_date: date, to_date: date) -> str:
+        projected = ", ".join(projections)
         return (
             f"SELECT {projected} FROM dbo.[{table_name}] WITH (NOLOCK) "
             f"WHERE CAST([{date_column}] AS DATE) >= '{from_date:%Y-%m-%d}' "
@@ -94,15 +121,17 @@ class BaseExtractor:
         exclude_datatypes: list[str] | tuple[str, ...] | None,
     ) -> ExtractPlan:
         effective_from_date = self.compute_effective_from_date(from_date=from_date, lookback_days=lookback_days)
-        selected_columns = self.build_dynamic_select_columns(
+        metadata_columns = self.build_dynamic_select_columns(
             connection=connection,
             table_name=table_name,
             exclude_datatypes=exclude_datatypes,
         )
+        selected_columns = [item.column_name for item in metadata_columns]
+        projected_columns = [item.select_expression for item in metadata_columns]
         select_sql = self.build_select_sql(
             table_name=table_name,
             date_column=date_column,
-            columns=selected_columns,
+            projections=projected_columns,
             from_date=effective_from_date,
             to_date=to_date,
         )
@@ -113,4 +142,5 @@ class BaseExtractor:
             to_date=to_date,
             select_sql=select_sql,
             selected_columns=tuple(selected_columns),
+            projected_columns=tuple(projected_columns),
         )

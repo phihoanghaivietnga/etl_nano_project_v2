@@ -70,20 +70,24 @@
 - Cấu phần lõi mới cho incremental động:
   - `src/core/base_extractor.py`
   - Chức năng chính:
-    - `ExtractPlan`: DTO mô tả kế hoạch extract (`table_name`, `date_column`, `effective_from_date`, `to_date`, `select_sql`, `selected_columns`).
+    - `ExtractPlan`: DTO mô tả kế hoạch extract (`table_name`, `date_column`, `effective_from_date`, `to_date`, `select_sql`, `selected_columns`, `projected_columns`).
+    - `DynamicColumnProjection`: DTO cột động gồm `column_name`, `data_type`, `select_expression`, `is_masked`.
     - `BaseExtractor.normalize_date(...)`: chuẩn hóa input ngày (`date`, `datetime`, `YYYY-MM-DD`).
     - `BaseExtractor.compute_effective_from_date(...)`: áp dụng lookback động `from_date - lookback_days`.
-    - `BaseExtractor.build_dynamic_select_columns(...)`: đọc metadata từ `INFORMATION_SCHEMA.COLUMNS`, tự loại cột theo `exclude_datatypes`.
-    - `BaseExtractor.build_select_sql(...)`: sinh Dynamic SELECT theo danh sách cột còn hợp lệ và cửa sổ ngày.
+    - `BaseExtractor.build_dynamic_select_columns(...)`: đọc metadata từ `INFORMATION_SCHEMA.COLUMNS`, giữ đủ thứ tự cột theo `ORDINAL_POSITION` và mask cột thuộc `exclude_datatypes` bằng `CAST(NULL AS VARCHAR(1)) AS [TenCot]`.
+    - `BaseExtractor.build_select_sql(...)`: sinh Dynamic SELECT theo projection expressions đã mask để chống lệch schema BCP (`22005`).
 - Tái cấu trúc `src/jobs/fact_loader.py` theo ma trận YAML:
   - Đọc node `incremental_tables` từ `config/tables.yaml` thành `FactTableSpec`.
   - Bỏ hardcode danh sách bảng fact, chuyển sang cấu hình động theo từng bảng.
+  - Bổ sung guard `validate_sql_revenue_rules(...)` (Regex) để bảo vệ logic fallback doanh thu `COALESCE/ISNULL` trên các template doanh thu.
   - Luồng 3 tầng chuẩn hóa:
     1. Tầng 1: `TRUNCATE` global landing `stg_nano_v2` + BCP `-w`.
     2. Tầng 2: MERGE từ landing sang facility staging, không dùng `TRUNCATE`.
     3. Tầng 3: thực thi SQL template có sẵn qua `merge_script`, không sửa file SQL template.
   - Bổ sung chốt chống treo lock:
     - Sau `TRUNCATE` landing có `connection.commit()` ngay để tránh lock chờ giữa `pyodbc` session và tiến trình BCP IN.
+  - Bổ sung chốt sanitize logging:
+    - `src/core/base_loader.py` ẩn nội dung query/command khi log BCP UTF-16-LE để tránh rò rỉ thông tin nhạy cảm.
 - Cập nhật điều phối:
   - `src/jobs/sync_orchestrator.py` truyền `tables_config_path` vào `FactLoader` để đồng bộ cùng một nguồn cấu hình YAML.
 - Mở rộng cấu hình:

@@ -759,3 +759,49 @@
 - Chạy kiểm tra cú pháp toàn bộ source:
   - `python -m compileall src`
 - Kết quả: compile thành công cho các module đã chỉnh sửa, không phát hiện lỗi cú pháp.
+
+## Phạm vi cập nhật theo yêu cầu 20260519_1710_sync_incremental_v2
+- Cập nhật `src/core/base_extractor.py`
+- Cập nhật `src/core/base_loader.py`
+- Cập nhật `src/jobs/fact_loader.py`
+- Cập nhật `docs/knowledge/GEM_ERROR_CONTEXT.md`
+- Cập nhật `docs/knowledge/GEM_TECHNICAL_STANDARDS.md`
+- Cập nhật `docs/knowledge/GEM_CODE_MAP.md`
+- Cập nhật `PROJECT_CHRONICLE.md`
+- Cập nhật `docs/prompts/20260519_1710_sync_incremental_v2.md`
+- Cập nhật `REPORT_CHANGES.md`
+
+## Nội dung đã thực hiện
+
+### 1) Vá lỗi lệch schema BCP 22005 bằng Masking NULL theo OOP
+- Refactor `BaseExtractor.build_dynamic_select_columns(...)`:
+  - Không còn loại bỏ cột thuộc `exclude_datatypes`.
+  - Cột bị loại trừ theo datatype được mask bằng `CAST(NULL AS VARCHAR(1)) AS [TenCot]`.
+  - Cột hợp lệ giữ nguyên `[TenCot]`.
+  - Bảo toàn thứ tự cột theo `ORDINAL_POSITION`.
+- Bổ sung DTO `DynamicColumnProjection` và mở rộng `ExtractPlan` thêm `projected_columns` để quản trị rõ projection vật lý khi sinh query.
+
+### 2) Sanitize logging chống rò rỉ thông tin nhạy cảm
+- Cập nhật `src/core/base_loader.py`:
+  - Gỡ log in raw command/query BCP.
+  - Thay bằng log an toàn: `Thực thi BCP UTF-16-LE (đã ẩn nội dung query/command để bảo mật)`.
+
+### 3) Củng cố guard SMI-3 cho fallback doanh thu
+- Bổ sung `FactLoader.validate_sql_revenue_rules(...)` dùng Regex kiểm tra fallback `COALESCE/ISNULL`.
+- Chỉ áp dụng guard cho whitelist template doanh thu:
+  - `merge_fact_thuphichvu_3in1.sql`
+  - `FactThuPhiDichVu_ThuPhiGoi_merge.sql`
+- Tích hợp check vào `_merge_to_datamart_using_template(...)` trước khi thực thi SQL.
+
+### 4) Bảo toàn các ràng buộc kỹ thuật hiện hành
+- Giữ nguyên cơ chế BCP `-w` (UTF-16-LE) trong luồng ETL.
+- Không chỉnh sửa template SQL nghiệp vụ doanh thu; chỉ thêm lớp guard kiểm duyệt trước thực thi.
+
+### 5) Cập nhật tầng tri thức và nhật ký kiến trúc
+- `GEM_ERROR_CONTEXT.md`: thêm mã lỗi `E-ETL-22005` + nguyên nhân + cách xử lý Masking NULL.
+- `GEM_TECHNICAL_STANDARDS.md`: chuẩn hóa quy tắc Dynamic SELECT kiểu masking và tiêu chuẩn “không log connection string”.
+- `GEM_CODE_MAP.md`: cập nhật cấu phần mới (`DynamicColumnProjection`, `projected_columns`, guard Regex doanh thu, sanitize log BCP).
+- `PROJECT_CHRONICLE.md`: ghi nhận ADR-23, ADR-24, ADR-25 cho đợt hotfix ngày 2026-05-20.
+
+### 6) Cập nhật báo cáo vào file yêu cầu
+- Điền đầy đủ mục `# BÁO CÁO CỦA THỢ CODE` trong `docs/prompts/20260519_1710_sync_incremental_v2.md`.

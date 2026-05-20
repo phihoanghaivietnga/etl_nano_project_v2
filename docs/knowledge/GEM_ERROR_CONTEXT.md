@@ -66,3 +66,25 @@
 ### Ghi chú vận hành
 - Phiên bản OAuth2 Desktop không còn dùng các hàm quota cũ (`bytes_to_gb`, `get_drive_quota`) và ngưỡng `MIN_FREE_QUOTA_GB`.
 - Nếu phát sinh lỗi upload, ưu tiên kiểm tra token OAuth, quyền thư mục đích và trạng thái chia sẻ trên Drive.
+
+## E-ETL-22005: BCP Schema Shift (Lệch schema khi BCP IN)
+
+### Triệu chứng
+- BCP thất bại với mã lỗi kiểu `22005` hoặc thông điệp ép kiểu/cột không khớp.
+- Dữ liệu bị xô lệch vị trí cột do danh sách cột extract không đồng bộ với bảng Landing/Staging đích.
+
+### Nguyên nhân gốc
+- Dynamic SELECT trước đây loại hẳn cột thuộc `exclude_datatypes`.
+- Việc loại cột làm thay đổi số lượng và thứ tự cột so với schema bảng đích.
+
+### Cách xử lý chuẩn
+- Không được loại cột khỏi projection theo `exclude_datatypes`.
+- Với cột thuộc datatype bị loại trừ, phải mask cột tại nguồn bằng:
+  - `CAST(NULL AS VARCHAR(1)) AS [TenCot]` (ưu tiên)
+  - hoặc `NULL AS [TenCot]` nếu phù hợp.
+- Với cột không bị loại trừ, giữ nguyên `[TenCot]`.
+- Bắt buộc giữ thứ tự cột theo `INFORMATION_SCHEMA.COLUMNS.ORDINAL_POSITION`.
+
+### Kiểm soát phòng ngừa
+- Kiểm tra chuỗi Dynamic SELECT trước khi BCP OUT để bảo đảm khớp 100% số lượng/vị trí cột với bảng đích.
+- Không chỉnh cơ chế BCP `-w` để giữ Unicode tiếng Việt trong dữ liệu y tế.

@@ -81,7 +81,7 @@ class BaseLoader:
             "-r\n",
             "-q",
         ]
-        self._log(f"Thực thi BCP UTF-16-LE: {' '.join(command)}")
+        self._log("Thực thi BCP UTF-16-LE (đã ẩn nội dung query/command để bảo mật)")
         subprocess.run(command, check=True, shell=False)
 
     def _execute_core(self, connection: pyodbc.Connection) -> None:

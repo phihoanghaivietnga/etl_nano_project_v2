@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -36,6 +37,11 @@ class FactLoader(BaseLoader):
         "DoThiLuc": ("MaHoSo", "NgayDo"),
         "HoSoKhamBenhNgoaiTru": ("MaHoSo",),
     }
+
+    REVENUE_GUARD_SQL_FILES: tuple[str, ...] = (
+        "merge_fact_thuphichvu_3in1.sql",
+        "FactThuPhiDichVu_ThuPhiGoi_merge.sql",
+    )
 
     def __init__(
         self,
@@ -265,11 +271,32 @@ class FactLoader(BaseLoader):
             .replace("{date_to}", f"{date_to:%Y-%m-%d}")
         )
 
+    @staticmethod
+    def validate_sql_revenue_rules(sql_text: str, sql_path: Path) -> None:
+        """
+        Guard SMI-3: bảo vệ quy tắc fallback doanh thu dùng COALESCE/ISNULL.
+        Chỉ áp dụng cho các template doanh thu yêu cầu fallback.
+        """
+
+        normalized_name = sql_path.name.lower()
+        needs_guard = normalized_name in {name.lower() for name in FactLoader.REVENUE_GUARD_SQL_FILES}
+        if not needs_guard:
+            return
+
+        fallback_pattern = re.compile(r"\b(COALESCE|ISNULL)\s*\(\s*[^,]+\s*,\s*[^\)]+\)", re.IGNORECASE)
+        if fallback_pattern.search(sql_text):
+            return
+
+        raise ValueError(
+            f"SQL template {sql_path} không đạt guard doanh thu SMI-3: thiếu fallback COALESCE/ISNULL."
+        )
+
     # Tầng 3: Datamart dm (chỉ thực thi SQL template có sẵn)
     def _merge_to_datamart_using_template(self, connection: pyodbc.Connection, spec: FactTableSpec, date_from: date, date_to: date) -> None:
         sql_path = Path(spec.merge_script)
         template = sql_path.read_text(encoding="utf-8")
         rendered = self._substitute_sql_template(template, date_from=date_from, date_to=date_to)
+        self.validate_sql_revenue_rules(rendered, sql_path)
         self.execute_sql_sync(connection, rendered)
 
     def _execute_core(self, connection: pyodbc.Connection, *args: Any, **kwargs: Any) -> None:

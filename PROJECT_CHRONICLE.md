@@ -282,3 +282,51 @@
   - Trong `FactLoader._truncate_table(...)`, thêm `connection.commit()` ngay sau khi thực thi `TRUNCATE`.
 - **Kết quả**:
   - Giải phóng lock sớm giữa các chặng, giảm nguy cơ treo pipeline incremental khi nạp qua BCP.
+
+## 2026-05-20: Hotfix khẩn lỗi lệch schema BCP 22005 và chuẩn hóa bảo mật log kết nối
+
+### ADR-23: Vá lệch schema BCP bằng Masking NULL trong Dynamic SELECT
+- **Sự cố**:
+  - Pipeline incremental có nguy cơ lỗi `BCP 22005` do danh sách cột extract bị lệch so với bảng Landing/Staging đích.
+- **Nguyên nhân gốc**:
+  - Logic cũ trong `BaseExtractor` loại bỏ hẳn cột thuộc `exclude_datatypes`, làm thay đổi số lượng và vị trí cột.
+- **Quyết định kỹ thuật**:
+  - Không loại cột khỏi projection.
+  - Với cột thuộc `exclude_datatypes`, mask bằng `CAST(NULL AS VARCHAR(1)) AS [TenCot]`.
+  - Giữ nguyên thứ tự cột theo `INFORMATION_SCHEMA.COLUMNS.ORDINAL_POSITION`.
+- **Triển khai**:
+  - Cập nhật `src/core/base_extractor.py`:
+    - Thêm DTO `DynamicColumnProjection`.
+    - Mở rộng `ExtractPlan` với `projected_columns`.
+    - Refactor `build_dynamic_select_columns(...)` và `build_select_sql(...)` theo cơ chế masking NULL.
+
+### ADR-24: Bịt lỗ hổng rò rỉ thông tin nhạy cảm qua log ETL
+- **Sự cố**:
+  - Log BCP trước đây có khả năng lộ query/command vận hành, kéo theo rủi ro lộ thông tin kết nối.
+- **Quyết định kỹ thuật**:
+  - Chuẩn hóa sanitize logging: không log `connection_string`, `PWD/password`, token/secret hoặc raw command nhạy cảm.
+- **Triển khai**:
+  - Cập nhật `src/core/base_loader.py`:
+    - Đổi log BCP sang thông điệp an toàn: ẩn nội dung query/command.
+
+### ADR-25: Củng cố guard doanh thu SMI-3 bằng Regex validator
+- **Bối cảnh**:
+  - Yêu cầu bắt buộc duy trì cơ chế kiểm duyệt fallback doanh thu `COALESCE/ISNULL` để tránh sai lệch số liệu khi merge Datamart.
+- **Quyết định kỹ thuật**:
+  - Bổ sung hàm `validate_sql_revenue_rules(...)` trong `FactLoader`.
+  - Áp dụng guard theo whitelist template doanh thu:
+    - `merge_fact_thuphichvu_3in1.sql`
+    - `FactThuPhiDichVu_ThuPhiGoi_merge.sql`
+- **Triển khai**:
+  - Cập nhật `src/jobs/fact_loader.py` để chạy regex check trước khi `execute_sql_sync(...)`.
+
+### Module bị ảnh hưởng trong đợt thay đổi 2026-05-20
+- `src/core/base_extractor.py`
+- `src/core/base_loader.py`
+- `src/jobs/fact_loader.py`
+- `docs/knowledge/GEM_ERROR_CONTEXT.md`
+- `docs/knowledge/GEM_TECHNICAL_STANDARDS.md`
+- `docs/knowledge/GEM_CODE_MAP.md`
+- `PROJECT_CHRONICLE.md`
+- `REPORT_CHANGES.md`
+- `docs/prompts/20260519_1710_sync_incremental_v2.md`
