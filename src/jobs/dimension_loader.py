@@ -51,6 +51,7 @@ class DimensionLoader(BaseLoader):
         nguon_dulieu_key: int,
         co_so_key: int,
         dimension_specs: tuple[DimensionTableSpec, ...] | None = None,
+        target_dimension_name: str | None = None,
     ) -> None:
         super().__init__(connection_string=datamart_connection, table_name=f"DimensionLoader:{facility_code}")
         self.production_connection = production_connection
@@ -61,6 +62,15 @@ class DimensionLoader(BaseLoader):
         self.nguon_dulieu_key = nguon_dulieu_key
         self.co_so_key = co_so_key
         self.dimension_specs = dimension_specs or self.DEFAULT_DIMENSION_SPECS
+        self.target_dimension_name = (target_dimension_name or "").strip()
+
+        if self.target_dimension_name:
+            available_dimensions = {spec.dimension_name for spec in self.dimension_specs}
+            if self.target_dimension_name not in available_dimensions:
+                raise ValueError(
+                    f"Dimension mục tiêu không hợp lệ: {self.target_dimension_name}. "
+                    f"Danh sách hợp lệ: {sorted(available_dimensions)}"
+                )
 
     def _log(self, message: str, **kwargs) -> None:
         _ = kwargs
@@ -161,5 +171,9 @@ class DimensionLoader(BaseLoader):
     def _execute_core(self, connection: pyodbc.Connection, *args: Any, **kwargs: Any) -> None:
         _ = args
         _ = kwargs
-        for spec in self.dimension_specs:
+        target_specs = self.dimension_specs
+        if self.target_dimension_name:
+            target_specs = tuple(spec for spec in self.dimension_specs if spec.dimension_name == self.target_dimension_name)
+
+        for spec in target_specs:
             self._execute_dimension_spec(connection, spec)

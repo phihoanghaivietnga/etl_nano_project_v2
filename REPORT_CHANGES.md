@@ -1079,3 +1079,148 @@
             f"Hoàn tất nạp Tầng 1 bằng PyODBC cho {plan.table_name}: {total_rows} dòng, chunk_size={self.batch_size}"
         )
 ```
+
+## [2026-05-21 11:14] - Xử lý yêu cầu `20260521_1055_fix_manual_pipeline_v1.md`
+
+### Mục tiêu
+- Tái cấu trúc Manual Runner để chạy pipeline đa chặng từ Production theo bảng được chọn trên UI, thay vì chỉ gọi MERGE Datamart chặng cuối.
+
+### File đã cập nhật
+- `src/ui/pages/manual_runner_page.py`
+- `src/jobs/fact_loader.py`
+- `src/jobs/dimension_loader.py`
+- `docs/knowledge/GEM_CODE_MAP.md`
+- `docs/knowledge/GEM_DATA_FLOW.md`
+- `PROJECT_CHRONICLE.md`
+- `REPORT_CHANGES.md`
+- `docs/prompts/20260521_1055_fix_manual_pipeline_v1.md`
+
+### Nội dung kỹ thuật đã thực hiện
+1. Tái cấu trúc điều phối UI Manual Runner:
+   - Gỡ hoàn toàn `GenericTableLoader`.
+   - Đọc động `config/tables.yaml` để xác định bảng incremental.
+   - Nếu bảng chọn thuộc `incremental_tables`: khởi tạo `FactLoader(..., target_table_name=...)` và truyền `from_date/to_date` từ UI.
+   - Nếu bảng chọn thuộc nhóm full-load: khởi tạo `DimensionLoader(..., target_dimension_name=...)` để chạy đúng 1 dimension.
+2. Cô lập tiến trình theo đối tượng đích từ UI:
+   - `FactLoader` bổ sung `target_table_name` và lọc `FactTableSpec` tương ứng trong `_execute_core`.
+   - `DimensionLoader` bổ sung `target_dimension_name` và lọc `DimensionTableSpec` tương ứng trong `_execute_core`.
+3. Bổ sung log tiến trình 3 chặng tuần tự ở Fact pipeline:
+   - `[STAGE-1] Prod -> Landing`
+   - `[STAGE-2] Landing -> ODS`
+   - `[STAGE-3] ODS -> Datamart`
+4. Bảo toàn lớp giáp an toàn bộ nhớ theo chỉ đạo:
+   - Chặng nạp global landing vẫn giữ `fast_executemany = False`.
+5. Đồng bộ tri thức và nhật ký:
+   - Cập nhật kiến trúc INTERFACE trong `GEM_CODE_MAP.md`.
+   - Cập nhật luồng dữ liệu manual xuyên Landing transient trong `GEM_DATA_FLOW.md`.
+   - Ghi ADR-39 tại `PROJECT_CHRONICLE.md`.
+
+### Đoạn mã đối soát: cấu hình khởi tạo FactLoader động từ Manual Runner
+```python
+if self.selected_table in self.incremental_table_names:
+    loader = FactLoader(
+        datamart_connection=datamart_connection,
+        production_connection=production_connection,
+        facility_code=facility_code,
+        facility_schema=facility_schema,
+        nguon_dulieu_key=nguon_dulieu_key,
+        co_so_key=co_so_key,
+        tables_config_path=str(self.tables_config_path),
+        target_table_name=self.selected_table,
+    )
+    await run.io_bound(
+        loader.execute_load,
+        from_date_native,
+        to_date_native,
+        queue=self.log_queue,
+        loop=loop,
+    )
+```
+
+### Log mẫu đối soát: tiến trình nạp 3 chặng tuần tự khi click nút UI
+```text
+[FactLoader:hanoi] [STAGE-1][START] Prod -> Landing cho bảng ThuPhiDichVu
+[FactLoader:hanoi] TRUNCATE stg_nano_v2.ThuPhiDichVu
+[FactLoader:hanoi] Hoàn tất nạp Tầng 1 bằng PyODBC cho ThuPhiDichVu: 12540 dòng, chunk_size=10000
+[FactLoader:hanoi] [STAGE-1][SUCCESS] Prod -> Landing hoàn tất cho bảng ThuPhiDichVu
+[FactLoader:hanoi] [STAGE-2][START] Landing -> ODS cho bảng ThuPhiDichVu
+[FactLoader:hanoi] [STAGE-2][SUCCESS] Landing -> ODS hoàn tất cho bảng ThuPhiDichVu
+[FactLoader:hanoi] [STAGE-3][START] ODS -> Datamart cho bảng ThuPhiDichVu
+[FactLoader:hanoi] [STAGE-3][SUCCESS] ODS -> Datamart hoàn tất cho bảng ThuPhiDichVu
+[FactLoader:hanoi] Hoàn tất thành công, đã commit
+```
+
+## [2026-05-21 13:35] - Xử lý yêu cầu `20260521_1335_fix_manual_pipeline_v2.md`
+
+### Mục tiêu
+- Sửa lỗi phân mảnh dữ liệu tài chính trên màn hình Manual Runner bằng cách đóng gói cụm bảng doanh thu (ThuPhiDichVu, ThuPhiBaoHiem, ThuPhiTangGiam) thành một thực thể đồng bộ hợp nhất.
+
+### File đã cập nhật
+- `src/ui/pages/manual_runner_page.py`
+- `src/jobs/fact_loader.py`
+- `docs/knowledge/GEM_CODE_MAP.md`
+- `docs/knowledge/GEM_DATA_FLOW.md`
+- `PROJECT_CHRONICLE.md`
+- `REPORT_CHANGES.md`
+- `docs/prompts/20260521_1335_fix_manual_pipeline_v2.md`
+
+### Nội dung kỹ thuật đã thực hiện
+1. Chỉnh sửa combobox UI Manual Runner:
+   - Chỉ giữ duy nhất lựa chọn `ThuPhiDichVu`.
+   - Loại bỏ hoàn toàn hai tùy chọn độc lập `ThuPhiBaoHiem` và `ThuPhiTangGiam`.
+   - Bảo tồn nguyên vẹn chuỗi văn bản nghiệp vụ y tế tiếng Việt gốc.
+2. Bổ sung logic điều kiện group tại `FactLoader._execute_core`:
+   - Khi `target_table_name == "ThuPhiDichVu"`, thiết lập ma trận `CLUSTER = {"ThuPhiBaoHiem", "ThuPhiTangGiam", "ThuPhiDichVu"}`.
+   - Duyệt nạp tuần tự cả 3 bảng qua 3 chặng: Prod -> Landing, Landing -> ODS, ODS -> Datamart.
+   - Giữ nguyên `staging_cursor.fast_executemany = False` ở chặng Tầng 1.
+3. Cập nhật tri thức:
+   - `GEM_CODE_MAP.md`: Bổ sung mục v2 trong nhóm INTERFACE mô tả cơ chế đóng gói cụm.
+   - `GEM_DATA_FLOW.md`: Cập nhật ma trận Manual Pipeline và bổ sung mục "Cơ chế đóng gói cụm".
+   - `PROJECT_CHRONICLE.md`: Ghi nhận dấu mốc mới.
+   - `REPORT_CHANGES.md`: Ghi nhận thay đổi files và lý do.
+
+### Đoạn mã đối soát: mở rộng target_specs cho cum ThuPhiDichVu
+```python
+target_specs = self.fact_specs
+if self.target_table_name:
+    if self.target_table_name == "ThuPhiDichVu":
+        CLUSTER = {"ThuPhiBaoHiem", "ThuPhiTangGiam", "ThuPhiDichVu"}
+        target_specs = tuple(
+            spec for spec in self.fact_specs
+            if spec.table_name in CLUSTER
+        )
+    else:
+        target_specs = tuple(
+            spec for spec in self.fact_specs
+            if spec.table_name == self.target_table_name
+        )
+```
+
+### Log mẫu đối soát: hiển thị trên panel UI khi chay cum 3 bang
+```text
+[FactLoader:hanoi] [STAGE-1][START] Prod -> Landing cho bảng ThuPhiBaoHiem
+[FactLoader:hanoi] TRUNCATE stg_nano_v2.ThuPhiBaoHiem
+[FactLoader:hanoi] Hoàn tất nạp Tầng 1 bằng PyODBC cho ThuPhiBaoHiem: 0 dòng, chunk_size=10000
+[FactLoader:hanoi] [STAGE-1][SUCCESS] Prod -> Landing hoàn tất cho bảng ThuPhiBaoHiem
+[FactLoader:hanoi] [STAGE-2][START] Landing -> ODS cho bảng ThuPhiBaoHiem
+[FactLoader:hanoi] [STAGE-2][SUCCESS] Landing -> ODS hoàn tất cho bảng ThuPhiBaoHiem
+[FactLoader:hanoi] [STAGE-3][START] ODS -> Datamart cho bảng ThuPhiBaoHiem
+[FactLoader:hanoi] [STAGE-3][SUCCESS] ODS -> Datamart hoàn tất cho bảng ThuPhiBaoHiem
+[FactLoader:hanoi] [STAGE-1][START] Prod -> Landing cho bảng ThuPhiTangGiam
+[FactLoader:hanoi] TRUNCATE stg_nano_v2.ThuPhiTangGiam
+[FactLoader:hanoi] Hoàn tất nạp Tầng 1 bằng PyODBC cho ThuPhiTangGiam: 0 dòng, chunk_size=10000
+[FactLoader:hanoi] [STAGE-1][SUCCESS] Prod -> Landing hoàn tất cho bảng ThuPhiTangGiam
+[FactLoader:hanoi] [STAGE-2][START] Landing -> ODS cho bảng ThuPhiTangGiam
+[FactLoader:hanoi] [STAGE-2][SUCCESS] Landing -> ODS hoàn tất cho bảng ThuPhiTangGiam
+[FactLoader:hanoi] [STAGE-3][START] ODS -> Datamart cho bảng ThuPhiTangGiam
+[FactLoader:hanoi] [STAGE-3][SUCCESS] ODS -> Datamart hoàn tất cho bảng ThuPhiTangGiam
+[FactLoader:hanoi] [STAGE-1][START] Prod -> Landing cho bảng ThuPhiDichVu
+[FactLoader:hanoi] TRUNCATE stg_nano_v2.ThuPhiDichVu
+[FactLoader:hanoi] Hoàn tất nạp Tầng 1 bằng PyODBC cho ThuPhiDichVu: 12540 dòng, chunk_size=10000
+[FactLoader:hanoi] [STAGE-1][SUCCESS] Prod -> Landing hoàn tất cho bảng ThuPhiDichVu
+[FactLoader:hanoi] [STAGE-2][START] Landing -> ODS cho bảng ThuPhiDichVu
+[FactLoader:hanoi] [STAGE-2][SUCCESS] Landing -> ODS hoàn tất cho bảng ThuPhiDichVu
+[FactLoader:hanoi] [STAGE-3][START] ODS -> Datamart cho bảng ThuPhiDichVu
+[FactLoader:hanoi] [STAGE-3][SUCCESS] ODS -> Datamart hoàn tất cho bảng ThuPhiDichVu
+[FactLoader:hanoi] Hoàn tất thành công, đã commit
+```

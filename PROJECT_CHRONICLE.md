@@ -462,3 +462,39 @@
   - `TRUNCATE` Landing vẫn nằm ngoài vòng lặp chunking.
   - `INSERT INTO ... VALUES ...` động theo danh sách `selected_columns` vẫn giữ nguyên.
   - Kiểm tra động `TableHasIdentity` và khối `try...finally` bật/tắt `IDENTITY_INSERT` vẫn giữ nguyên.
+
+## 2026-05-21: Tái cấu trúc Manual Runner theo pipeline đa chặng từ Production
+
+### ADR-39: Manual Runner điều phối động theo bảng chọn, cô lập chạy đơn đối tượng
+- **Bối cảnh**:
+  - Màn hình Manual Runner trước đây dùng `GenericTableLoader`, chủ yếu chạy MERGE chặng cuối Datamart.
+  - Nhu cầu nghiệp vụ yêu cầu bấm Run từ UI phải kích hoạt đầy đủ luồng ETL theo bảng chọn, đi từ Production xuyên qua các tầng trung gian.
+- **Quyết định kỹ thuật**:
+  - Loại bỏ `GenericTableLoader` khỏi `src/ui/pages/manual_runner_page.py`.
+  - Điều phối động theo `config/tables.yaml`:
+    - Nếu bảng thuộc `incremental_tables`: khởi tạo `FactLoader` và truyền `from_date/to_date` từ UI.
+    - Nếu thuộc danh mục full-load: khởi tạo `DimensionLoader` để chạy full theo dimension mục tiêu.
+  - Mở rộng loader để cô lập tiến trình chạy đơn đối tượng:
+    - `FactLoader(..., target_table_name=...)` chỉ chạy đúng 1 `FactTableSpec`.
+    - `DimensionLoader(..., target_dimension_name=...)` chỉ chạy đúng 1 `DimensionTableSpec`.
+- **Ràng buộc an toàn tiếp tục giữ nguyên**:
+  - Chặng nạp global landing của Fact vẫn giữ `fast_executemany = False`.
+  - Không thay đổi thuật ngữ nghiệp vụ tiếng Việt gốc và không làm sai lệch quy tắc fallback doanh thu hiện hành trong SQL template.
+
+## 2026-05-21
+
+### Dấu mốc: Đóng gói cụm bảng doanh thu 3-in-1 trên Manual Runner
+- **Vấn đề**: Dữ liệu tài chính trên màn hình Manual Runner bị phân mảnh do 3 bảng ThuPhiBaoHiem, ThuPhiTangGiam, ThuPhiDichVu hiển thị độc lập, dễ gây nhầm lẫn người dùng khi chỉ chạy 1 bảng mà thiếu 2 bảng còn lại.
+- **Quyết định kỹ thuật**:
+  - Gom 3 bảng doanh thu thành một thực thể đồng bộ hợp nhất mang tên `ThuPhiDichVu` trên UI.
+  - `src/ui/pages/manual_runner_page.py`: Xóa `ThuPhiBaoHiem` và `ThuPhiTangGiam` khỏi combobox.
+  - `src/jobs/fact_loader.py`: Khi `target_table_name == "ThuPhiDichVu"`, thiết lập ma trận `CLUSTER = {"ThuPhiBaoHiem", "ThuPhiTangGiam", "ThuPhiDichVu"}` và duyệt nạp tuần tự.
+- **Luồng dữ liệu cho cụm ThuPhiDichVu**:
+  1. Prod -> Landing transient cho từng bảng trong cụm.
+  2. Landing -> ODS cơ sở cho từng bảng.
+  3. ODS -> Datamart qua template `merge_fact_thuphichvu_3in1.sql`.
+- **Tác động tài liệu**:
+  - `docs/knowledge/GEM_CODE_MAP.md`: Bổ sung mục v2 trong nhóm INTERFACE.
+  - `docs/knowledge/GEM_DATA_FLOW.md`: Cập nhật ma trận xử lý Manual Pipeline cho cụm 3 bảng.
+  - `PROJECT_CHRONICLE.md`: Mô tả dấu mốc này.
+  - `REPORT_CHANGES.md`: Ghi nhận thay đổi files và lý do.

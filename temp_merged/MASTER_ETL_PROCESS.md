@@ -2206,6 +2206,7 @@ class DimensionLoader(BaseLoader):
         nguon_dulieu_key: int,
         co_so_key: int,
         dimension_specs: tuple[DimensionTableSpec, ...] | None = None,
+        target_dimension_name: str | None = None,
     ) -> None:
         super().__init__(connection_string=datamart_connection, table_name=f"DimensionLoader:{facility_code}")
         self.production_connection = production_connection
@@ -2216,6 +2217,15 @@ class DimensionLoader(BaseLoader):
         self.nguon_dulieu_key = nguon_dulieu_key
         self.co_so_key = co_so_key
         self.dimension_specs = dimension_specs or self.DEFAULT_DIMENSION_SPECS
+        self.target_dimension_name = (target_dimension_name or "").strip()
+
+        if self.target_dimension_name:
+            available_dimensions = {spec.dimension_name for spec in self.dimension_specs}
+            if self.target_dimension_name not in available_dimensions:
+                raise ValueError(
+                    f"Dimension mục tiêu không hợp lệ: {self.target_dimension_name}. "
+                    f"Danh sách hợp lệ: {sorted(available_dimensions)}"
+                )
 
     def _log(self, message: str, **kwargs) -> None:
         _ = kwargs
@@ -2316,7 +2326,11 @@ class DimensionLoader(BaseLoader):
     def _execute_core(self, connection: pyodbc.Connection, *args: Any, **kwargs: Any) -> None:
         _ = args
         _ = kwargs
-        for spec in self.dimension_specs:
+        target_specs = self.dimension_specs
+        if self.target_dimension_name:
+            target_specs = tuple(spec for spec in self.dimension_specs if spec.dimension_name == self.target_dimension_name)
+
+        for spec in target_specs:
             self._execute_dimension_spec(connection, spec)
 ```
 
@@ -2368,6 +2382,7 @@ class FactLoader(BaseLoader):
         co_so_key: int,
         tables_config_path: str = "config/tables.yaml",
         batch_size: int = 10000,
+        target_table_name: str | None = None,
     ) -> None:
         super().__init__(connection_string=datamart_connection, table_name=f"FactLoader:{facility_code}")
         self.production_connection = production_connection
@@ -2377,9 +2392,18 @@ class FactLoader(BaseLoader):
         self.co_so_key = co_so_key
         self.tables_config_path = Path(tables_config_path)
         self.batch_size = batch_size
+        self.target_table_name = (target_table_name or "").strip()
 
         self.extractor = BaseExtractor(production_connection=production_connection)
         self.fact_specs = self._load_incremental_specs()
+
+        if self.target_table_name:
+            available_tables = {spec.table_name for spec in self.fact_specs}
+            if self.target_table_name not in available_tables:
+                raise ValueError(
+                    f"Bảng incremental mục tiêu không hợp lệ: {self.target_table_name}. "
+                    f"Danh sách hợp lệ: {sorted(available_tables)}"
+                )
 
     def _load_incremental_specs(self) -> tuple[FactTableSpec, ...]:
         with self.tables_config_path.open("r", encoding="utf-8") as stream:
@@ -2596,7 +2620,24 @@ class FactLoader(BaseLoader):
         to_date = self.extractor.normalize_date(to_date_input, fallback=today)
         from_date = self.extractor.normalize_date(from_date_input, fallback=to_date)
 
-        for spec in self.fact_specs:
+        target_specs = self.fact_specs
+        if self.target_table_name:
+            # Khi chon ThuPhiDichVu tren UI, mo rong cum 3 bang doanh thu chay tuan tu
+            if self.target_table_name == "ThuPhiDichVu":
+                CLUSTER = {"ThuPhiBaoHiem", "ThuPhiTangGiam", "ThuPhiDichVu"}
+                target_specs = tuple(
+                    spec for spec in self.fact_specs
+                    if spec.table_name in CLUSTER
+                )
+            else:
+                target_specs = tuple(
+                    spec for spec in self.fact_specs
+                    if spec.table_name == self.target_table_name
+                )
+
+
+        for spec in target_specs:
+            self._log(f"[STAGE-1][START] Prod -> Landing cho bảng {spec.table_name}")
             plan = self.extractor.build_extract_plan(
                 table_name=spec.table_name,
                 date_column=spec.date_column,
@@ -2607,20 +2648,26 @@ class FactLoader(BaseLoader):
             )
 
             self._load_to_global_staging(plan)
+            self._log(f"[STAGE-1][SUCCESS] Prod -> Landing hoàn tất cho bảng {spec.table_name}")
 
             with self.get_db_context() as merge_connection:
+                self._log(f"[STAGE-2][START] Landing -> ODS cho bảng {spec.table_name}")
                 self._upsert_from_global_to_facility_staging(
                     connection=merge_connection,
                     spec=spec,
                     from_date=plan.effective_from_date,
                     to_date=to_date,
                 )
+                self._log(f"[STAGE-2][SUCCESS] Landing -> ODS hoàn tất cho bảng {spec.table_name}")
+
+                self._log(f"[STAGE-3][START] ODS -> Datamart cho bảng {spec.table_name}")
                 self._merge_to_datamart_using_template(
                     connection=merge_connection,
                     spec=spec,
                     date_from=plan.effective_from_date,
                     date_to=to_date,
                 )
+                self._log(f"[STAGE-3][SUCCESS] ODS -> Datamart hoàn tất cho bảng {spec.table_name}")
                 merge_connection.commit()
 ```
 

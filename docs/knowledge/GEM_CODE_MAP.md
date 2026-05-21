@@ -209,6 +209,36 @@
   - `src/db/templates/sql/dashboard_doichieu/fact_thu_phi_dich_vu/staging.sql`
   - `src/db/templates/sql/dashboard_doichieu/fact_thu_phi_dich_vu/datamart.sql`
 
+#### Bổ sung theo yêu cầu 20260521_1055_fix_manual_pipeline_v1
+- Điều phối Manual Runner đã chuyển từ `GenericTableLoader` sang Loader nghiệp vụ động theo bảng chọn:
+  - `src/ui/pages/manual_runner_page.py`
+  - Cấu hình nguồn chọn bảng đọc từ `config/tables.yaml`:
+    - `incremental_tables` -> chạy `FactLoader` theo bảng đích + khoảng ngày nghiệp vụ.
+    - danh mục full-load (`DimensionLoader.DEFAULT_DIMENSION_SPECS`) -> chạy `DimensionLoader` theo dimension đích.
+- Mở rộng loader để cô lập chạy đơn đối tượng từ UI:
+  - `src/jobs/fact_loader.py`:
+    - `__init__(..., target_table_name: str | None = None)`.
+    - `_execute_core(...)` lọc `FactTableSpec` theo đúng bảng được chọn.
+    - `target_table_name == "ThuPhiDichVu"` thiết lập ma trận cụm 3 bảng `["ThuPhiBaoHiem", "ThuPhiTangGiam", "ThuPhiDichVu"]` để duyệt nạp tuần tự.
+  - `src/jobs/dimension_loader.py`:
+    - `__init__(..., target_dimension_name: str | None = None)`.
+    - `_execute_core(...)` lọc `DimensionTableSpec` theo đúng dimension được chọn.
+- Chuỗi nạp incremental qua Manual Runner vẫn giữ chuẩn an toàn RAM ở Tầng 1:
+  - `staging_cursor.fast_executemany = False` trong `_load_to_global_staging`.
+
+#### Bổ sung theo yêu cầu 20260521_1335_fix_manual_pipeline_v2
+- Đóng gói cụm bảng doanh thu (ThuPhiDichVu, ThuPhiBaoHiem, ThuPhiTangGiam) thành một thực thể đồng bộ hợp nhất trên UI Manual Runner:
+  - `src/ui/pages/manual_runner_page.py`:
+    - Chỉ giữ duy nhất lựa chọn `ThuPhiDichVu` trong combobox.
+    - Loại bỏ hoàn toàn `ThuPhiBaoHiem` và `ThuPhiTangGiam` khỏi danh sách.
+    - Giữ nguyên chuỗi văn bản nghiệp vụ y tế tiếng Việt gốc.
+  - `src/jobs/fact_loader.py`:
+    - `_execute_core(...)` kiểm tra `target_table_name == "ThuPhiDichVu"`:
+      - Thiết lập `CLUSTER = {"ThuPhiBaoHiem", "ThuPhiTangGiam", "ThuPhiDichVu"}`.
+      - Duyệt nạp tuần tự cả 3 bảng qua 3 chặng: Prod -> Landing, Landing -> ODS, ODS -> Datamart.
+    - Giữ nguyên `staging_cursor.fast_executemany = False` ở chặng Tầng 1.
+    - Template hợp nhất: `merge_fact_thuphichvu_3in1.sql` cho chặng Datamart.
+
 ### Nhóm KNOWLEDGE_BASE
 - Phạm vi:
   - `/docs/knowledge/`
