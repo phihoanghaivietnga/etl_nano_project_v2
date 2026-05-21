@@ -97,6 +97,79 @@
     - `DoThiLuc` (date: `NgayDo`)
     - `HoSoKhamBenhNgoaiTru` (date: `NgayVaoKham`, type `fact`, merge `DimLuotKham_merge.sql`)
 
+#### Bổ sung theo yêu cầu 20260520_1110_sync_incremental_v4
+- Chuẩn hóa xử lý metadata cột ở `src/core/base_extractor.py`:
+  - Trong `BaseExtractor.build_dynamic_select_columns(...)`, bắt buộc `.strip()` ngay tại điểm đọc metadata từ `pyodbc`:
+    - `column_name = str(row[0]).strip()`
+    - `data_type = str(row[1]).strip().lower()`
+- Bổ sung năng lực BCP chuẩn ở `src/core/base_loader.py`:
+  - `BaseLoader.parse_connection_string(...)` dùng Regex `re.IGNORECASE` để bóc tách connection string.
+  - `BaseLoader._build_bcp_connection_args(...)` map tham số kết nối cho BCP: `-S`, `-d`, và auth `-U/-P` hoặc `-T`.
+  - `BaseLoader.run_bcp_utf16le(...)` nhận thêm `source_connection_string` để bắt buộc BCP OUT dùng kết nối nguồn Production.
+  - `BaseLoader.run_bcp_in(...)` mới cho BCP IN, bắt buộc đủ cờ: `-w`, `-k`, `-E`, `-t\t`, `-r\n`.
+  - `BaseLoader._mask_bcp_command(...)` dùng để log command BCP IN có che mật khẩu.
+- Chuẩn hóa transaction biên trong `src/jobs/fact_loader.py`:
+  - Tầng 1 chạy theo thứ tự cứng:
+    1. BCP OUT từ Production.
+    2. Mở connection A -> `TRUNCATE` Landing -> `commit()` -> đóng connection A.
+    3. BCP IN vào Landing bằng session subprocess riêng.
+    4. Mở connection B mới để chạy các bước MERGE tầng sau.
+
+#### Bổ sung theo yêu cầu 20260520_1435_sync_incremental_v5
+- Chuyển kiến trúc incremental từ Black-list sang Whitelist cột:
+  - `config/tables.yaml`:
+    - Xóa toàn bộ `exclude_datatypes`.
+    - Mỗi bảng incremental bắt buộc khai báo `selected_columns`.
+- Vai trò mới của `src/core/base_extractor.py`:
+  - Không còn quét `INFORMATION_SCHEMA.COLUMNS`.
+  - Không còn `DynamicColumnProjection` và logic masking datatype.
+  - Sinh Dynamic SELECT trực tiếp từ `selected_columns`.
+  - Tự ghép 3 cột enrichment vào projection:
+    - `{co_so_key} AS [CoSoKey]`
+    - `{nguon_du_lieu_key} AS [NguonDuLieuKey]`
+    - `'{ma_co_so}' AS [MaCoSo]`
+- Vai trò mới của `src/jobs/fact_loader.py`:
+  - `FactTableSpec` đổi sang giữ `selected_columns`.
+  - `build_extract_plan(...)` nhận trực tiếp `selected_columns` + 3 biến ngữ cảnh (`co_so_key`, `nguon_du_lieu_key`, `ma_co_so`).
+  - Luồng Tầng 1 giữ biên giao dịch cô lập chống deadlock:
+    1. BCP OUT hoàn tất.
+    2. Connection A: `TRUNCATE` + `commit()` + đóng ngay.
+    3. BCP IN bằng subprocess session riêng.
+    4. Connection B mới để chạy MERGE tầng sau.
+
+#### Bổ sung theo yêu cầu 20260520_1540_sync_incremental_v6
+- Quyết định chiến lược mới cho Incremental:
+  - Hủy hoàn toàn BCP trong luồng incremental.
+  - Quay về pipeline PyODBC để ổn định ép kiểu ngầm (implicit casting).
+- `src/core/base_extractor.py`:
+  - `build_extract_plan(...)` chỉ còn nhận `selected_columns`.
+  - Dynamic SELECT chỉ gồm các cột Whitelist, không ghép enrichment projection vào câu SELECT.
+- `src/core/base_loader.py`:
+  - Loại bỏ các hàm và tiện ích BCP:
+    - `parse_connection_string(...)`
+    - `_build_bcp_connection_args(...)`
+    - `_mask_bcp_command(...)`
+    - `run_bcp_utf16le(...)`
+    - `run_bcp_in(...)`
+- `src/jobs/fact_loader.py`:
+  - Tầng 1 chuyển sang nạp PyODBC theo chunk:
+    1. `cursor.execute(select_sql)` trên connection Production.
+    2. `TRUNCATE stg_nano_v2.[TenBang]` đúng 1 lần trước vòng lặp.
+    3. Dùng `fetchmany(batch_size)` + `executemany(...)` để nạp dữ liệu.
+    4. `commit()` sau khi nạp xong Tầng 1.
+  - Bắt buộc INSERT động tường minh:
+    - `INSERT INTO [stg_nano_v2].[TenBang] ([Col1], [Col2], ...) VALUES (?, ?, ...)`.
+  - Vẫn giữ kiến trúc Staging 3 tầng:
+    - Tầng 1: Landing transient.
+    - Tầng 2: MERGE landing -> facility staging.
+    - Tầng 3: MERGE facility staging -> datamart.
+- Script vận hành mới:
+  - `scripts/sync_selected_columns_from_staging.py`:
+    - Kết nối bằng `STAGING_CONNECTION_STRING`.
+    - Quét `INFORMATION_SCHEMA.COLUMNS` theo `ORDINAL_POSITION` cho 6 bảng incremental.
+    - `.strip()` tên cột, loại `MaCoSo/CoSoKey/NguonDuLieuKey`.
+    - In preview YAML hoặc ghi trực tiếp `selected_columns` vào `config/tables.yaml` (`--write`).
+
 ### Nhóm INTERFACE
 - Phạm vi:
   - `/src/ui/`

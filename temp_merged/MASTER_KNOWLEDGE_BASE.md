@@ -309,6 +309,186 @@
   - Trong `FactLoader._truncate_table(...)`, thêm `connection.commit()` ngay sau khi thực thi `TRUNCATE`.
 - **Kết quả**:
   - Giải phóng lock sớm giữa các chặng, giảm nguy cơ treo pipeline incremental khi nạp qua BCP.
+
+## 2026-05-20: Hotfix khẩn lỗi lệch schema BCP 22005 và chuẩn hóa bảo mật log kết nối
+
+### ADR-23: Vá lệch schema BCP bằng Masking NULL trong Dynamic SELECT
+- **Sự cố**:
+  - Pipeline incremental có nguy cơ lỗi `BCP 22005` do danh sách cột extract bị lệch so với bảng Landing/Staging đích.
+- **Nguyên nhân gốc**:
+  - Logic cũ trong `BaseExtractor` loại bỏ hẳn cột thuộc `exclude_datatypes`, làm thay đổi số lượng và vị trí cột.
+- **Quyết định kỹ thuật**:
+  - Không loại cột khỏi projection.
+  - Với cột thuộc `exclude_datatypes`, mask bằng `CAST(NULL AS VARCHAR(1)) AS [TenCot]`.
+  - Giữ nguyên thứ tự cột theo `INFORMATION_SCHEMA.COLUMNS.ORDINAL_POSITION`.
+- **Triển khai**:
+  - Cập nhật `src/core/base_extractor.py`:
+    - Thêm DTO `DynamicColumnProjection`.
+    - Mở rộng `ExtractPlan` với `projected_columns`.
+    - Refactor `build_dynamic_select_columns(...)` và `build_select_sql(...)` theo cơ chế masking NULL.
+
+### ADR-24: Bịt lỗ hổng rò rỉ thông tin nhạy cảm qua log ETL
+- **Sự cố**:
+  - Log BCP trước đây có khả năng lộ query/command vận hành, kéo theo rủi ro lộ thông tin kết nối.
+- **Quyết định kỹ thuật**:
+  - Chuẩn hóa sanitize logging: không log `connection_string`, `PWD/password`, token/secret hoặc raw command nhạy cảm.
+- **Triển khai**:
+  - Cập nhật `src/core/base_loader.py`:
+    - Đổi log BCP sang thông điệp an toàn: ẩn nội dung query/command.
+
+### ADR-25: Củng cố guard doanh thu SMI-3 bằng Regex validator
+- **Bối cảnh**:
+  - Yêu cầu bắt buộc duy trì cơ chế kiểm duyệt fallback doanh thu `COALESCE/ISNULL` để tránh sai lệch số liệu khi merge Datamart.
+- **Quyết định kỹ thuật**:
+  - Bổ sung hàm `validate_sql_revenue_rules(...)` trong `FactLoader`.
+  - Áp dụng guard theo whitelist template doanh thu:
+    - `merge_fact_thuphichvu_3in1.sql`
+    - `FactThuPhiDichVu_ThuPhiGoi_merge.sql`
+- **Triển khai**:
+  - Cập nhật `src/jobs/fact_loader.py` để chạy regex check trước khi `execute_sql_sync(...)`.
+
+### Module bị ảnh hưởng trong đợt thay đổi 2026-05-20
+- `src/core/base_extractor.py`
+- `src/core/base_loader.py`
+- `src/jobs/fact_loader.py`
+- `docs/knowledge/GEM_ERROR_CONTEXT.md`
+- `docs/knowledge/GEM_TECHNICAL_STANDARDS.md`
+- `docs/knowledge/GEM_CODE_MAP.md`
+- `PROJECT_CHRONICLE.md`
+- `REPORT_CHANGES.md`
+- `docs/prompts/20260519_1710_sync_incremental_v2.md`
+
+## 2026-05-20: Điều chỉnh khẩn v3 cho lỗi BCP 22005 (Unicode Masking)
+
+### ADR-26: Chuyển masking NULL sang NVARCHAR(MAX) để tương thích tuyệt đối BCP -w
+- **Bối cảnh**:
+  - Sau bản vá v2, vẫn ghi nhận tình huống `BCP copy in failed (22005)` khi kiểu che cột chưa đồng nhất tuyệt đối với luồng Unicode rộng.
+- **Quyết định kỹ thuật**:
+  - Loại bỏ biểu thức `CAST(NULL AS VARCHAR(1))` khỏi Dynamic SELECT.
+  - Chuẩn bắt buộc mới: `CAST(NULL AS NVARCHAR(MAX)) AS [TenCot]` cho mọi cột thuộc `exclude_datatypes`.
+  - Giữ đối sánh cột 1:1 giữa `physical_columns` và `select_projections` để tránh lệch vị trí khi BCP IN.
+
+### ADR-27: Ghi nhận khoản nợ kỹ thuật theo chỉ thị Master
+- Cảnh báo rủi ro (Nợ kỹ thuật): Đã gỡ bỏ cơ chế Validate SQL Fallback Doanh Thu bằng Python theo quyết định của Master. Luồng ETL hiện tại hoàn toàn tin tưởng vào các file SQL Template. Nếu file SQL bị sửa sai, hệ thống sẽ không thể tự động chặn lỗi.
+
+## 2026-05-20: Hotfix khẩn BCP v4 cho luồng Incremental Tầng 1
+
+### ADR-28: Chuẩn hóa parse connection BCP bằng Regex và tách kết nối nguồn/đích
+- **Sự cố**:
+  - BCP OUT/IN có thời điểm thiếu tham số kết nối, gây thất bại runtime.
+  - Luồng trước đó có nguy cơ dùng sai ngữ cảnh kết nối giữa nguồn Production và đích Staging.
+- **Quyết định kỹ thuật**:
+  - `BaseLoader.parse_connection_string(...)` dùng Regex `re.IGNORECASE` để bóc tách key-value connection string.
+  - `run_bcp_utf16le(...)` bắt buộc nhận `source_connection_string` để BCP OUT luôn đi vào DB nguồn.
+  - Bổ sung `run_bcp_in(...)` và chuẩn hóa đầy đủ cờ `-w -k -E -t\t -r\n`.
+  - Log command BCP IN dạng mask mật khẩu để đối soát mà không lộ `PWD`.
+
+### ADR-29: Chuẩn hóa transaction biên chống deadlock ở Tầng 1
+- **Sự cố**:
+  - Nếu giữ connection xuyên suốt khi phối hợp `TRUNCATE` và `BCP IN`, pipeline có nguy cơ treo lock.
+- **Quyết định kỹ thuật**:
+  - Luồng cứng tại `FactLoader`:
+    1. BCP OUT thành công.
+    2. Mở connection A, `TRUNCATE` landing, `commit()`, đóng connection A ngay.
+    3. Gọi BCP IN bằng subprocess session riêng.
+    4. Mở connection B mới để chạy các MERGE tầng sau.
+
+### ADR-30: Sửa nhiễu metadata do trailing spaces từ pyodbc
+- **Sự cố**:
+  - Metadata cột trả về từ `pyodbc` có thể chứa khoảng trắng ở đầu/cuối làm lệch nhận diện datatype.
+- **Quyết định kỹ thuật**:
+  - Cố định chuẩn tại `BaseExtractor.build_dynamic_select_columns(...)`:
+    - `column_name = str(row[0]).strip()`
+    - `data_type = str(row[1]).strip().lower()`
+
+## 2026-05-20: Tái cấu trúc Incremental v5 sang Whitelist cột
+
+### ADR-31: Khai tử Black-list `exclude_datatypes`, chuyển sang Whitelist `selected_columns`
+- **Bối cảnh**:
+  - Cơ chế cũ dựa vào quét metadata và loại trừ theo datatype làm tăng độ phức tạp vận hành và khó kiểm soát hình học cột khi BCP.
+- **Quyết định kỹ thuật**:
+  - Loại bỏ hoàn toàn `exclude_datatypes` khỏi `config/tables.yaml`.
+  - Mỗi bảng incremental bắt buộc khai báo `selected_columns` do quản trị tự kiểm soát.
+  - `BaseExtractor` không còn truy vấn `INFORMATION_SCHEMA.COLUMNS`.
+
+### ADR-32: Chuẩn hóa Dynamic SELECT từ Whitelist + enrichment keys
+- **Quyết định kỹ thuật**:
+  - Dynamic SELECT đọc trực tiếp `selected_columns` theo đúng thứ tự khai báo.
+  - Bắt buộc ghép thêm 3 cột enrichment ở cuối projection:
+    - `{co_so_key} AS [CoSoKey]`
+    - `{nguon_du_lieu_key} AS [NguonDuLieuKey]`
+    - `'{ma_co_so}' AS [MaCoSo]`
+  - Mục tiêu: giữ đối sánh 100% số lượng/vị trí cột với Landing để chống lệch schema BCP.
+
+### ADR-33: Cô lập transaction biên Tầng 1 chống deadlock
+- **Quyết định kỹ thuật**:
+  - Chuỗi thao tác bắt buộc:
+    1. BCP OUT hoàn tất.
+    2. Mở Connection A (đích) -> `TRUNCATE` -> `commit()`.
+    3. Đóng Connection A ngay để giải phóng Sch-M lock.
+    4. BCP IN bằng subprocess, chờ `exit code == 0`.
+    5. Mở Connection B mới để MERGE tầng sau.
+  - Đồng thời giữ chuẩn cờ BCP:
+    - OUT: `-w -t\t -r\n`
+    - IN: `-w -k -E -t\t -r\n`
+
+## 2026-05-20: Tái cấu trúc Incremental v6 quay về PyODBC
+
+### ADR-34: Quyết định chiến lược bỏ BCP cho Incremental
+- **Bối cảnh**:
+  - Luồng incremental BCP phát sinh nhiều điểm nhạy cảm liên quan hình học cột, transaction boundary và lỗi ép kiểu khi dữ liệu thay đổi.
+- **Quyết định kỹ thuật**:
+  - Hủy hoàn toàn BCP cho luồng incremental.
+  - Quay về kiến trúc nạp dữ liệu bằng PyODBC để tăng độ ổn định implicit casting.
+  - Chấp nhận đánh đổi một phần tốc độ bulk, bù bằng Whitelist `selected_columns` để giảm tải bộ nhớ.
+
+### ADR-35: Chuẩn Tầng 1 bằng PyODBC chunking + INSERT tường minh
+- **Quyết định kỹ thuật**:
+  - Tầng 1 chạy theo chuỗi bắt buộc:
+    1. `SELECT` từ Production bằng `cursor.execute(...)`.
+    2. `TRUNCATE stg_nano_v2.[TenBang]` đúng 1 lần trước vòng nạp.
+    3. Nạp theo chunk `fetchmany(batch_size)` + `executemany(...)`.
+    4. `commit()` sau khi nạp xong.
+  - Bắt buộc build INSERT động tường minh theo `selected_columns`:
+    - `INSERT INTO [stg_nano_v2].[TenBang] ([Col1], [Col2], ...) VALUES (?, ?, ...)`.
+  - Cột hệ thống (`MaCoSo`, `CoSoKey`, `NguonDuLieuKey`) không truyền ở Tầng 1, để DB nhận default/NULL hoặc xử lý downstream.
+
+### ADR-36: Bổ sung script đồng bộ Whitelist từ Staging schema
+- **Quyết định kỹ thuật**:
+  - Thêm script `scripts/sync_selected_columns_from_staging.py` để chuẩn hóa `selected_columns` từ schema `stg_nano_v2`.
+  - Script dùng `STAGING_CONNECTION_STRING`, quét `INFORMATION_SCHEMA.COLUMNS` theo `ORDINAL_POSITION`, `.strip()` tên cột, loại `MaCoSo/CoSoKey/NguonDuLieuKey`.
+  - Hỗ trợ 2 chế độ:
+    - Preview YAML ra terminal.
+    - Ghi trực tiếp vào `config/tables.yaml` bằng cờ `--write`.
+
+## 2026-05-20: Hotfix Incremental v7 cho lỗi IDENTITY_INSERT 544
+
+### ADR-37: Mô phỏng cờ BCP `-E` bằng Identity Insert động trong PyODBC
+- **Sự cố**:
+  - Luồng nạp Tầng 1 bằng PyODBC phát sinh lỗi SQL Server 544 (`IDENTITY_INSERT is set to OFF`) khi bảng Landing có cột IDENTITY.
+- **Quyết định kỹ thuật**:
+  - Trước vòng nạp chunking, bắt buộc kiểm tra metadata động:
+    - `SELECT OBJECTPROPERTY(OBJECT_ID('stg_nano_v2.[TenBang]'), 'TableHasIdentity')`.
+  - Nếu bảng có identity (`TableHasIdentity = 1`):
+    - Bật `SET IDENTITY_INSERT stg_nano_v2.[TenBang] ON` trước vòng `executemany`.
+    - Bọc toàn bộ vòng nạp trong khối `try...finally`.
+    - Trong `finally`, bắt buộc tắt lại `SET IDENTITY_INSERT ... OFF` để trả trạng thái an toàn, tránh treo session.
+- **Phạm vi áp dụng**:
+  - `src/jobs/fact_loader.py`, trong Tầng 1 `SELECT -> TRUNCATE -> executemany` của incremental pipeline.
+
+## 2026-05-21: Quyết định kiến trúc tối hậu cho Incremental Tầng 1
+
+### ADR-38: Tắt hoàn toàn `fast_executemany` để bảo vệ bộ nhớ tuyệt đối
+- **Bối cảnh**:
+  - Luồng Incremental Tầng 1 có nguy cơ `MemoryError` khi bảng chứa cột `NVARCHAR(MAX)/VARCHAR(MAX)` do cơ chế cấp phát bộ nhớ tĩnh lớn của ODBC khi bật `fast_executemany`.
+- **Quyết định kiến trúc tối hậu**:
+  - Tắt vĩnh viễn `fast_executemany` trong `_load_to_global_staging` của `FactLoader`.
+  - Chấp nhận tốc độ nạp Row-by-Row ngầm của PyODBC để đổi lấy an toàn bộ nhớ 100%.
+  - Khai tử cơ chế fallback tăng/giảm `fast_executemany` trong runtime để giảm độ phức tạp và tránh hành vi khó dự đoán.
+- **Ràng buộc bắt buộc giữ nguyên**:
+  - `TRUNCATE` Landing vẫn nằm ngoài vòng lặp chunking.
+  - `INSERT INTO ... VALUES ...` động theo danh sách `selected_columns` vẫn giữ nguyên.
+  - Kiểm tra động `TableHasIdentity` và khối `try...finally` bật/tắt `IDENTITY_INSERT` vẫn giữ nguyên.
 ```
 
 ### SOURCE: README.md
@@ -562,20 +742,24 @@ ETL_Nano_Project_V2/
 - Cấu phần lõi mới cho incremental động:
   - `src/core/base_extractor.py`
   - Chức năng chính:
-    - `ExtractPlan`: DTO mô tả kế hoạch extract (`table_name`, `date_column`, `effective_from_date`, `to_date`, `select_sql`, `selected_columns`).
+    - `ExtractPlan`: DTO mô tả kế hoạch extract (`table_name`, `date_column`, `effective_from_date`, `to_date`, `select_sql`, `selected_columns`, `projected_columns`).
+    - `DynamicColumnProjection`: DTO cột động gồm `column_name`, `data_type`, `select_expression`, `is_masked`.
     - `BaseExtractor.normalize_date(...)`: chuẩn hóa input ngày (`date`, `datetime`, `YYYY-MM-DD`).
     - `BaseExtractor.compute_effective_from_date(...)`: áp dụng lookback động `from_date - lookback_days`.
-    - `BaseExtractor.build_dynamic_select_columns(...)`: đọc metadata từ `INFORMATION_SCHEMA.COLUMNS`, tự loại cột theo `exclude_datatypes`.
-    - `BaseExtractor.build_select_sql(...)`: sinh Dynamic SELECT theo danh sách cột còn hợp lệ và cửa sổ ngày.
+    - `BaseExtractor.build_dynamic_select_columns(...)`: đọc metadata từ `INFORMATION_SCHEMA.COLUMNS`, giữ đủ thứ tự cột theo `ORDINAL_POSITION` và mask cột thuộc `exclude_datatypes` bằng `CAST(NULL AS VARCHAR(1)) AS [TenCot]`.
+    - `BaseExtractor.build_select_sql(...)`: sinh Dynamic SELECT theo projection expressions đã mask để chống lệch schema BCP (`22005`).
 - Tái cấu trúc `src/jobs/fact_loader.py` theo ma trận YAML:
   - Đọc node `incremental_tables` từ `config/tables.yaml` thành `FactTableSpec`.
   - Bỏ hardcode danh sách bảng fact, chuyển sang cấu hình động theo từng bảng.
+  - Bổ sung guard `validate_sql_revenue_rules(...)` (Regex) để bảo vệ logic fallback doanh thu `COALESCE/ISNULL` trên các template doanh thu.
   - Luồng 3 tầng chuẩn hóa:
     1. Tầng 1: `TRUNCATE` global landing `stg_nano_v2` + BCP `-w`.
     2. Tầng 2: MERGE từ landing sang facility staging, không dùng `TRUNCATE`.
     3. Tầng 3: thực thi SQL template có sẵn qua `merge_script`, không sửa file SQL template.
   - Bổ sung chốt chống treo lock:
     - Sau `TRUNCATE` landing có `connection.commit()` ngay để tránh lock chờ giữa `pyodbc` session và tiến trình BCP IN.
+  - Bổ sung chốt sanitize logging:
+    - `src/core/base_loader.py` ẩn nội dung query/command khi log BCP UTF-16-LE để tránh rò rỉ thông tin nhạy cảm.
 - Cập nhật điều phối:
   - `src/jobs/sync_orchestrator.py` truyền `tables_config_path` vào `FactLoader` để đồng bộ cùng một nguồn cấu hình YAML.
 - Mở rộng cấu hình:
@@ -584,6 +768,79 @@ ETL_Nano_Project_V2/
     - `ThuPhiGoi` (date: `NgayThu`)
     - `DoThiLuc` (date: `NgayDo`)
     - `HoSoKhamBenhNgoaiTru` (date: `NgayVaoKham`, type `fact`, merge `DimLuotKham_merge.sql`)
+
+#### Bổ sung theo yêu cầu 20260520_1110_sync_incremental_v4
+- Chuẩn hóa xử lý metadata cột ở `src/core/base_extractor.py`:
+  - Trong `BaseExtractor.build_dynamic_select_columns(...)`, bắt buộc `.strip()` ngay tại điểm đọc metadata từ `pyodbc`:
+    - `column_name = str(row[0]).strip()`
+    - `data_type = str(row[1]).strip().lower()`
+- Bổ sung năng lực BCP chuẩn ở `src/core/base_loader.py`:
+  - `BaseLoader.parse_connection_string(...)` dùng Regex `re.IGNORECASE` để bóc tách connection string.
+  - `BaseLoader._build_bcp_connection_args(...)` map tham số kết nối cho BCP: `-S`, `-d`, và auth `-U/-P` hoặc `-T`.
+  - `BaseLoader.run_bcp_utf16le(...)` nhận thêm `source_connection_string` để bắt buộc BCP OUT dùng kết nối nguồn Production.
+  - `BaseLoader.run_bcp_in(...)` mới cho BCP IN, bắt buộc đủ cờ: `-w`, `-k`, `-E`, `-t\t`, `-r\n`.
+  - `BaseLoader._mask_bcp_command(...)` dùng để log command BCP IN có che mật khẩu.
+- Chuẩn hóa transaction biên trong `src/jobs/fact_loader.py`:
+  - Tầng 1 chạy theo thứ tự cứng:
+    1. BCP OUT từ Production.
+    2. Mở connection A -> `TRUNCATE` Landing -> `commit()` -> đóng connection A.
+    3. BCP IN vào Landing bằng session subprocess riêng.
+    4. Mở connection B mới để chạy các bước MERGE tầng sau.
+
+#### Bổ sung theo yêu cầu 20260520_1435_sync_incremental_v5
+- Chuyển kiến trúc incremental từ Black-list sang Whitelist cột:
+  - `config/tables.yaml`:
+    - Xóa toàn bộ `exclude_datatypes`.
+    - Mỗi bảng incremental bắt buộc khai báo `selected_columns`.
+- Vai trò mới của `src/core/base_extractor.py`:
+  - Không còn quét `INFORMATION_SCHEMA.COLUMNS`.
+  - Không còn `DynamicColumnProjection` và logic masking datatype.
+  - Sinh Dynamic SELECT trực tiếp từ `selected_columns`.
+  - Tự ghép 3 cột enrichment vào projection:
+    - `{co_so_key} AS [CoSoKey]`
+    - `{nguon_du_lieu_key} AS [NguonDuLieuKey]`
+    - `'{ma_co_so}' AS [MaCoSo]`
+- Vai trò mới của `src/jobs/fact_loader.py`:
+  - `FactTableSpec` đổi sang giữ `selected_columns`.
+  - `build_extract_plan(...)` nhận trực tiếp `selected_columns` + 3 biến ngữ cảnh (`co_so_key`, `nguon_du_lieu_key`, `ma_co_so`).
+  - Luồng Tầng 1 giữ biên giao dịch cô lập chống deadlock:
+    1. BCP OUT hoàn tất.
+    2. Connection A: `TRUNCATE` + `commit()` + đóng ngay.
+    3. BCP IN bằng subprocess session riêng.
+    4. Connection B mới để chạy MERGE tầng sau.
+
+#### Bổ sung theo yêu cầu 20260520_1540_sync_incremental_v6
+- Quyết định chiến lược mới cho Incremental:
+  - Hủy hoàn toàn BCP trong luồng incremental.
+  - Quay về pipeline PyODBC để ổn định ép kiểu ngầm (implicit casting).
+- `src/core/base_extractor.py`:
+  - `build_extract_plan(...)` chỉ còn nhận `selected_columns`.
+  - Dynamic SELECT chỉ gồm các cột Whitelist, không ghép enrichment projection vào câu SELECT.
+- `src/core/base_loader.py`:
+  - Loại bỏ các hàm và tiện ích BCP:
+    - `parse_connection_string(...)`
+    - `_build_bcp_connection_args(...)`
+    - `_mask_bcp_command(...)`
+    - `run_bcp_utf16le(...)`
+    - `run_bcp_in(...)`
+- `src/jobs/fact_loader.py`:
+  - Tầng 1 chuyển sang nạp PyODBC theo chunk:
+    1. `cursor.execute(select_sql)` trên connection Production.
+    2. `TRUNCATE stg_nano_v2.[TenBang]` đúng 1 lần trước vòng lặp.
+    3. Dùng `fetchmany(batch_size)` + `executemany(...)` để nạp dữ liệu.
+    4. `commit()` sau khi nạp xong Tầng 1.
+  - Bắt buộc INSERT động tường minh:
+    - `INSERT INTO [stg_nano_v2].[TenBang] ([Col1], [Col2], ...) VALUES (?, ?, ...)`.
+  - Vẫn giữ kiến trúc Staging 3 tầng:
+    - Tầng 1: Landing transient.
+    - Tầng 2: MERGE landing -> facility staging.
+    - Tầng 3: MERGE facility staging -> datamart.
+- Script vận hành mới:
+  - `scripts/sync_selected_columns_from_staging.py`:
+    - Kết nối bằng `STAGING_CONNECTION_STRING`.
+    - Quét `INFORMATION_SCHEMA.COLUMNS` theo `ORDINAL_POSITION` cho 6 bảng incremental.
+    - `.strip()` tên cột, loại `MaCoSo/CoSoKey/NguonDuLieuKey`.
+    - In preview YAML hoặc ghi trực tiếp `selected_columns` vào `config/tables.yaml` (`--write`).
 
 ### Nhóm INTERFACE
 - Phạm vi:
@@ -862,6 +1119,57 @@ ETL_Nano_Project_V2/
 ### Ghi chú vận hành
 - Phiên bản OAuth2 Desktop không còn dùng các hàm quota cũ (`bytes_to_gb`, `get_drive_quota`) và ngưỡng `MIN_FREE_QUOTA_GB`.
 - Nếu phát sinh lỗi upload, ưu tiên kiểm tra token OAuth, quyền thư mục đích và trạng thái chia sẻ trên Drive.
+
+## E-ETL-22005: BCP Schema Shift (Lệch schema khi BCP IN)
+
+### Triệu chứng
+- BCP thất bại với mã lỗi kiểu `22005` hoặc thông điệp ép kiểu/cột không khớp.
+- Dữ liệu bị xô lệch vị trí cột do danh sách cột extract không đồng bộ với bảng Landing/Staging đích.
+
+### Nguyên nhân gốc
+- Dynamic SELECT trước đây loại hẳn cột thuộc `exclude_datatypes`.
+- Việc loại cột làm thay đổi số lượng và thứ tự cột so với schema bảng đích.
+
+### Cách xử lý chuẩn
+- Không được loại cột khỏi projection theo `exclude_datatypes`.
+- Với cột thuộc datatype bị loại trừ, phải mask cột tại nguồn bằng:
+  - `CAST(NULL AS NVARCHAR(MAX)) AS [TenCot]` (bắt buộc khi chạy BCP `-w`).
+- Với cột không bị loại trừ, giữ nguyên `[TenCot]`.
+- Bắt buộc giữ thứ tự cột theo `INFORMATION_SCHEMA.COLUMNS.ORDINAL_POSITION`.
+
+### Kiểm soát phòng ngừa
+- Kiểm tra chuỗi Dynamic SELECT trước khi BCP OUT để bảo đảm khớp 100% số lượng/vị trí cột với bảng đích.
+- Không chỉnh cơ chế BCP `-w` để giữ Unicode tiếng Việt trong dữ liệu y tế.
+
+## E-ETL-BCP-METADATA-TRIM: Trailing spaces từ pyodbc làm lệch Data Type
+
+### Triệu chứng
+- Một số đợt extract phát sinh nhận diện sai `data_type` hoặc tên cột khi đọc metadata từ `INFORMATION_SCHEMA.COLUMNS`.
+- Dấu hiệu thường gặp: cột thuộc danh sách loại trừ không được mask đúng kỳ vọng.
+
+### Nguyên nhân gốc
+- Dữ liệu metadata trả về từ `pyodbc` có thể chứa khoảng trắng thừa ở đầu/cuối chuỗi.
+- Logic cũ không `.strip()` ngay khi đọc `COLUMN_NAME`/`DATA_TYPE`.
+
+### Cách xử lý chuẩn
+- Trong `BaseExtractor.build_dynamic_select_columns(...)`, bắt buộc chuẩn hóa ngay khi nhận dữ liệu:
+  - `column_name = str(row[0]).strip()`
+  - `data_type = str(row[1]).strip().lower()`
+
+## E-ETL-BCP-CONNECTION-001: BCP OUT/IN thiếu tham số kết nối
+
+### Triệu chứng
+- Tiến trình `bcp` thất bại ngay khi chạy `queryout` hoặc `in` do không xác định được server/database/auth.
+- Log lỗi thường xoay quanh kết nối hoặc không truy cập được SQL Server.
+
+### Nguyên nhân gốc
+- Command BCP không gắn đủ `-S`, `-d`, và thông tin xác thực (`-U/-P` hoặc `-T`).
+- Dùng sai connection context: BCP OUT dùng nhầm connection đích thay vì connection nguồn Production.
+
+### Cách xử lý chuẩn
+- Parse `connection_string` bằng Regex `re.IGNORECASE` để bóc tách tham số kết nối.
+- BCP OUT bắt buộc nhận `source_connection_string` riêng.
+- BCP IN dùng connection đích của Loader và bắt buộc cờ `-w -k -E -t\t -r\n`.
 ```
 
 ### SOURCE: docs/knowledge/GEM_GUIDE.md
@@ -998,8 +1306,8 @@ ETL_Nano_Project_V2/
   - `date_column`
   - `merge_script`
   - `lookback_days`
-  - `exclude_datatypes`
-- Bắt buộc viết block comment ngay phía trên biến `lookback_days` và `exclude_datatypes`.
+  - `selected_columns` (Whitelist cột, kiểu `list[string]`)
+- Bắt buộc viết block comment ngay phía trên biến `lookback_days` và `selected_columns`.
 
 ### Chuẩn xử lý ngày và cửa sổ incremental
 - `from_date` và `to_date` phải được chuẩn hóa về `date` trước khi sinh câu lệnh extract.
@@ -1007,15 +1315,24 @@ ETL_Nano_Project_V2/
   - `effective_from_date = from_date - lookback_days`
 - `lookback_days` bắt buộc là số nguyên `>= 0`; nếu âm phải raise lỗi cấu hình.
 
-### Chuẩn Dynamic SELECT theo metadata cột
-- Phải truy vấn `INFORMATION_SCHEMA.COLUMNS` tại nguồn để lấy danh sách cột theo thứ tự `ORDINAL_POSITION`.
-- Nếu có `exclude_datatypes`, phải loại cột theo `DATA_TYPE` trước khi sinh SELECT.
-- Nếu sau loại trừ không còn cột hợp lệ, phải dừng job và báo lỗi rõ tên bảng.
+### Chuẩn Dynamic SELECT theo Whitelist cột
+- Dynamic SELECT phải đọc trực tiếp từ `selected_columns` trong `tables.yaml` theo đúng thứ tự quản trị khai báo.
+- Không sinh cột đệm NULL/enrichment trong câu SELECT incremental.
+- Cột enrichment hệ thống (`MaCoSo`, `CoSoKey`, `NguonDuLieuKey`) được xử lý ở tầng đích theo default/NULL hoặc logic MERGE downstream.
 
 ### Chuẩn thực thi Staging 3 tầng
 - Tầng 1 Global Landing (`stg_nano_v2`):
-  - Cho phép `TRUNCATE` + BCP IN/OUT.
-  - Sau `TRUNCATE` phải `commit` ngay để tránh lock chờ khi BCP chạy ở session khác.
+  - Dùng PyODBC thuần: `SELECT` từ Production vào RAM + `executemany` vào Landing.
+  - `TRUNCATE` phải chạy đúng 1 lần trước vòng lặp chunking `fetchmany/executemany`.
+  - Bắt buộc dùng INSERT động tường minh theo `selected_columns`:
+    - `INSERT INTO stg_nano_v2.[TenBang] ([Col1], [Col2], ...) VALUES (?, ?, ...)`.
+  - Bắt buộc kiểm tra động metadata identity trước vòng nạp:
+    - `SELECT OBJECTPROPERTY(OBJECT_ID('stg_nano_v2.[TenBang]'), 'TableHasIdentity')`.
+  - Nếu bảng có identity (`TableHasIdentity = 1`), phải mô phỏng cờ BCP `-E` bằng PyODBC:
+    - `SET IDENTITY_INSERT stg_nano_v2.[TenBang] ON` trước `executemany`.
+    - Bọc vòng lặp nạp trong `try...finally`.
+    - Trong `finally`, bắt buộc `SET IDENTITY_INSERT ... OFF` để trả trạng thái an toàn session.
+  - Bắt buộc thiết lập `fast_executemany = False` trước vòng lặp nạp để vô hiệu hóa cấp phát bộ nhớ tĩnh của ODBC, bảo vệ RAM tuyệt đối khi bảng có cột `NVARCHAR(MAX)/VARCHAR(MAX)`.
 - Tầng 2 Facility Historical Staging:
   - Chỉ cho phép UPSERT/MERGE.
   - Nghiêm cấm `TRUNCATE`.
@@ -1024,8 +1341,24 @@ ETL_Nano_Project_V2/
   - Không chỉnh sửa nội dung SQL template trong task incremental.
 
 ### Chuẩn giao tiếp cơ sở dữ liệu và bảo toàn dữ liệu tiếng Việt
-- Khi dùng BCP bắt buộc cờ `-w` (UTF-16-LE).
 - Giữ nguyên nội dung Unicode tiếng Việt trong dữ liệu y tế, không chuyển mã thủ công.
+- Chuẩn nạp dữ liệu cho INCREMENTAL_LOAD Tầng 1:
+  - Sử dụng PyODBC `executemany` theo chunk với `fast_executemany = False` để ưu tiên an toàn bộ nhớ tuyệt đối.
+  - Không dùng cơ chế fallback tăng/giảm `fast_executemany` trong runtime.
+
+### Chuẩn cô lập giao dịch biên chống lỗi lock ở Tầng 1
+- Trình tự bắt buộc:
+  1. Mở Connection nguồn, đọc dữ liệu theo chunk (`fetchmany`) từ Dynamic SELECT.
+  2. Mở Connection đích, `TRUNCATE` Landing đúng 1 lần trước vòng nạp.
+  3. Chạy `executemany` theo chunk với INSERT tường minh.
+  4. `commit()` sau khi hoàn tất nạp Landing.
+  5. Chạy MERGE tầng 2/3 bằng connection đích.
+
+### Chuẩn bảo mật logging kết nối
+- Nghiêm cấm log trực tiếp `connection_string`, password (`PWD`), token, secret hoặc full command có chứa thông tin xác thực.
+- Chỉ log thông điệp an toàn dạng ngữ cảnh vận hành, ví dụ:
+  - `Connected to Database [Ten_DB] at Server [Ten_Server] successfully`.
+- Với luồng incremental PyODBC, không log raw payload dữ liệu hoặc thông tin nhạy cảm trong câu lệnh kết nối.
 ```
 
 ### SOURCE: docs/knowledge/loop_Gem_Github_GoogleDrive_NotebookLM.md

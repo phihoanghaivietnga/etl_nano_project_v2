@@ -109,129 +109,564 @@ API_URL=http://localhost:9001
 etl_settings:
   odbc_chunk_size: 5000
   active_facilities:
-    - hanoi
-
+  - hanoi
 incremental_tables:
   ThuPhiDichVu:
     type: fact
     date_column: NgayDenKham
     merge_script: src/db/templates/sql/fact/merge_fact_thuphichvu_3in1.sql
-    # Mục đích: Định nghĩa số ngày tua ngược cửa sổ incremental để tránh sót dữ liệu đến trễ.
-    # Khi dùng: Dùng cho bảng phát sinh có khả năng điều chỉnh/hạch toán lại trong các ngày gần đây.
-    # Giá trị hợp lệ: int >= 0.
-    # Ý nghĩa: 0 = chỉ nạp đúng from_date; N > 0 = dịch lùi from_date thêm N ngày trước khi lọc.
     lookback_days: 1
-    # Mục đích: Loại các cột có kiểu dữ liệu đặc biệt gây rủi ro BCP/không cần cho downstream.
-    # Khi dùng: Dùng khi bảng nguồn chứa cột binary/blob/xml/text lớn hoặc kiểu không tương thích.
-    # Giá trị hợp lệ: list[string], mỗi phần tử là DATA_TYPE trong INFORMATION_SCHEMA.COLUMNS.
-    # Ý nghĩa: Cột nào có DATA_TYPE thuộc danh sách này sẽ bị loại khỏi dynamic SELECT.
-    exclude_datatypes:
-      - image
-      - text
-      - ntext
-      - sql_variant
-      - xml
-
+    selected_columns:
+    - MaThuPhi
+    - MaPhieuDichVu
+    - MaHoSo
+    - NgayDenKham
+    - MaDichVu
+    - MaChiTieu
+    - TongTien
+    - DaDongTien
+    - MaNguoiDung
+    - MaKhoaKham
+    - MaPhongKham
+    - MaKhoaCanLamSang
+    - MaPhongCanLamSang
+    - DaThucHien
+    - SoHoaDon
+    - NgayVaoMay
+    - NgayBaoCaoDoanhThu
+    - TrangThaiPhieu
+    - SoLuong
+    - SoLuongThucHien
+    - GhiChu
+    - IDKeys
+    - NgayGioYLenh
+    - NgayTraKetQua
+    - MaBacSyCD
+    - HanhChinhOrTruc
+    - DichVuOrTuNguyen
+    - sysdate
+    - TongTienSauTangGiam
+    - BHNTChiTra
+    - MaBacSyTH
+    - StateThanhToanNoiTru
+    - LOCK
+    - STTThuPhi
+    - MaNguoiDungCD
+    - MaGoiDichVu
   ThuPhiBaoHiem:
     type: fact
     date_column: NgayDenKham
     merge_script: src/db/templates/sql/fact/merge_fact_thuphichvu_3in1.sql
-    # Mục đích: Định nghĩa số ngày tua ngược cửa sổ incremental để tránh sót dữ liệu đến trễ.
-    # Khi dùng: Dùng cho bảng phát sinh có khả năng điều chỉnh/hạch toán lại trong các ngày gần đây.
-    # Giá trị hợp lệ: int >= 0.
-    # Ý nghĩa: 0 = chỉ nạp đúng from_date; N > 0 = dịch lùi from_date thêm N ngày trước khi lọc.
     lookback_days: 1
-    # Mục đích: Loại các cột có kiểu dữ liệu đặc biệt gây rủi ro BCP/không cần cho downstream.
-    # Khi dùng: Dùng khi bảng nguồn chứa cột binary/blob/xml/text lớn hoặc kiểu không tương thích.
-    # Giá trị hợp lệ: list[string], mỗi phần tử là DATA_TYPE trong INFORMATION_SCHEMA.COLUMNS.
-    # Ý nghĩa: Cột nào có DATA_TYPE thuộc danh sách này sẽ bị loại khỏi dynamic SELECT.
-    exclude_datatypes:
-      - image
-      - text
-      - ntext
-      - sql_variant
-      - xml
-
+    selected_columns:
+    - MaThuPhi
+    - MaHoSo
+    - MaPhieuDichVu
+    - NgayDenKham
+    - MaDichVu
+    - MaChiTieu
+    - TongTien
+    - BHChiTra
+    - ThanhTien
+    - DaDongTien
+    - MaNguoiDung
+    - PhanTramBaoHiem
+    - MaKhoaKham
+    - MaPhongKham
+    - MaKhoaCanLamSang
+    - MaPhongCanLamSang
+    - DuyetBaoHiem
+    - StateThanhToanNoiTru
+    - SoHoaDon
+    - TienChenhLech
+    - NgayVaoMay
+    - TrangThaiPhieu
+    - SoLuong
+    - SoLuongThucHien
+    - GhiChu
+    - IDKeys
+    - NgayGioYLenh
+    - NgayTraKetQua
+    - MaBacSyCD
+    - HanhChinhOrTruc
+    - DichVuKyThuatCao
+    - TrongNgoai_DT
+    - LOCK
+    - sysdate
+    - DaThuChenh
+    - SoHoaDonThuChenh
+    - MaNguoiThuChenh
+    - NgayThuChenh
+    - MaNguoiDuyet
+    - NgayDuyet
+    - MaNguoiThanhToan
+    - NgayThanhToan
+    - MaBacSyTH
+    - LOCKTHUCHENH
+    - STTThuPhi
+    - MaNguoiDungCD
+    - MaLoai
+    - DonGiaBH
+    - DonGiaDV
+    - bChuyenDoiTuong
+    - NgayGioThucHienYL
+    - MaGoiDichVu
+    - DonGiaGoiDichVu
   ThuPhiTangGiam:
     type: fact
     date_column: NgayDenKham
     merge_script: src/db/templates/sql/fact/merge_fact_thuphichvu_3in1.sql
-    # Mục đích: Định nghĩa số ngày tua ngược cửa sổ incremental để tránh sót dữ liệu đến trễ.
-    # Khi dùng: Dùng cho bảng phát sinh có khả năng điều chỉnh/hạch toán lại trong các ngày gần đây.
-    # Giá trị hợp lệ: int >= 0.
-    # Ý nghĩa: 0 = chỉ nạp đúng from_date; N > 0 = dịch lùi from_date thêm N ngày trước khi lọc.
     lookback_days: 1
-    # Mục đích: Loại các cột có kiểu dữ liệu đặc biệt gây rủi ro BCP/không cần cho downstream.
-    # Khi dùng: Dùng khi bảng nguồn chứa cột binary/blob/xml/text lớn hoặc kiểu không tương thích.
-    # Giá trị hợp lệ: list[string], mỗi phần tử là DATA_TYPE trong INFORMATION_SCHEMA.COLUMNS.
-    # Ý nghĩa: Cột nào có DATA_TYPE thuộc danh sách này sẽ bị loại khỏi dynamic SELECT.
-    exclude_datatypes:
-      - image
-      - text
-      - ntext
-      - sql_variant
-      - xml
-
+    selected_columns:
+    - MaPhieuTangGiam
+    - MaPhieuDichVu
+    - MaHoSo
+    - NgayDenKham
+    - MaDichVu
+    - MaChiTieu
+    - SoTienGoc
+    - SoTienTang
+    - SoTienGiam
+    - MaNguoiDung
+    - MaLyDo
+    - IDKeys
+    - NgayTangGiam
+    - DaDongTien
+    - SoHoaDon
+    - PhanTramTang
+    - PhanTramGiam
+    - MaDoiTuongTangGiam
+    - MaPhongKham
+    - MaBacSyCD
+    - MaPhongCanLamSang
+    - MaBacSyTH
+    - NgayGioYLenh
+    - MaGoiDichVu
   ThuPhiGoi:
     type: fact
     date_column: NgayThu
     merge_script: src/db/templates/sql/fact/FactThuPhiDichVu_ThuPhiGoi_merge.sql
-    # Mục đích: Định nghĩa số ngày tua ngược cửa sổ incremental để tránh sót dữ liệu đến trễ.
-    # Khi dùng: Dùng cho bảng phát sinh có khả năng điều chỉnh/hạch toán lại trong các ngày gần đây.
-    # Giá trị hợp lệ: int >= 0.
-    # Ý nghĩa: 0 = chỉ nạp đúng from_date; N > 0 = dịch lùi from_date thêm N ngày trước khi lọc.
     lookback_days: 1
-    # Mục đích: Loại các cột có kiểu dữ liệu đặc biệt gây rủi ro BCP/không cần cho downstream.
-    # Khi dùng: Dùng khi bảng nguồn chứa cột binary/blob/xml/text lớn hoặc kiểu không tương thích.
-    # Giá trị hợp lệ: list[string], mỗi phần tử là DATA_TYPE trong INFORMATION_SCHEMA.COLUMNS.
-    # Ý nghĩa: Cột nào có DATA_TYPE thuộc danh sách này sẽ bị loại khỏi dynamic SELECT.
-    exclude_datatypes:
-      - image
-      - text
-      - ntext
-      - sql_variant
-      - xml
-
+    selected_columns:
+    - ID
+    - MaHoSo
+    - MaLoaiGoi
+    - NgayThu
+    - SoTien
+    - GiamGia
+    - TongTien
+    - HinhThucThanhToan
+    - GhiChuHinhThucThanhToan
+    - MaNguoiDung
+    - HoanTat
+    - TrangThaiHuy
+    - MaPhieuThu
+    - LyDoGiam
+    - ThanhTien
+    - bTiemChung
+    - GiamGiaBHYT
+    - GiamGiaKhac
   DoThiLuc:
     type: fact
     date_column: NgayDo
     merge_script: src/db/templates/sql/fact/FactDoThiLuc_merge.sql
-    # Mục đích: Định nghĩa số ngày tua ngược cửa sổ incremental để tránh sót dữ liệu đến trễ.
-    # Khi dùng: Dùng cho bảng phát sinh có khả năng điều chỉnh/hạch toán lại trong các ngày gần đây.
-    # Giá trị hợp lệ: int >= 0.
-    # Ý nghĩa: 0 = chỉ nạp đúng from_date; N > 0 = dịch lùi from_date thêm N ngày trước khi lọc.
     lookback_days: 1
-    # Mục đích: Loại các cột có kiểu dữ liệu đặc biệt gây rủi ro BCP/không cần cho downstream.
-    # Khi dùng: Dùng khi bảng nguồn chứa cột binary/blob/xml/text lớn hoặc kiểu không tương thích.
-    # Giá trị hợp lệ: list[string], mỗi phần tử là DATA_TYPE trong INFORMATION_SCHEMA.COLUMNS.
-    # Ý nghĩa: Cột nào có DATA_TYPE thuộc danh sách này sẽ bị loại khỏi dynamic SELECT.
-    exclude_datatypes:
-      - image
-      - text
-      - ntext
-      - sql_variant
-      - xml
-
+    selected_columns:
+    - MaHoSo
+    - KXM_Cau_MP
+    - KXM_Cau_MT
+    - KXM_Tru_MP
+    - KXM_Tru_MT
+    - KXM_Truc_MP
+    - KXM_Truc_MT
+    - KXM_KCDT
+    - KC_Cau_MP
+    - KC_Cau_MT
+    - KC_Tru_MP
+    - KC_Tru_MT
+    - KC_Truc_MP
+    - KC_Truc_MT
+    - KC_CK_MP
+    - KC_CK_MT
+    - KC_Add_MP
+    - KC_Add_MT
+    - KC_KCDT
+    - KXHT_KK_MP
+    - KXHT_KK_MT
+    - KXHT_Cau_MP
+    - KXHT_Cau_MT
+    - KXHT_Tru_MP
+    - KXHT_Tru_MT
+    - KXHT_Truc_MP
+    - KXHT_Truc_MT
+    - KXHT_CK_MP
+    - KXHT_CK_MT
+    - KXHT_Add_MP
+    - KXHT_Add_MT
+    - KXHT_KCDT
+    - KXSLDT_KK_MP
+    - KXSLDT_KK_MT
+    - KXSLDT_Cau_MP
+    - KXSLDT_Cau_MT
+    - KXSLDT_Tru_MP
+    - KXSLDT_Tru_MT
+    - KXSLDT_Truc_MP
+    - KXSLDT_Truc_MT
+    - KXSLDT_CK_MP
+    - KXSLDT_CK_MT
+    - KXSLDT_Add_MP
+    - KXSLDT_Add_MT
+    - KXSLDT_KCDT
+    - Skiascopy_MP
+    - Skiascopy_MT
+    - NhanAp_MP
+    - NhanAp_MT
+    - BeDayGiacMac_MP
+    - BeDayGiacMac_MT
+    - DuongKinhDongTu_MP
+    - DuongKinhDongTu_MT
+    - K1_MP
+    - K1_MT
+    - K2_MP
+    - K2_MT
+    - ThiTruongVaoVien_MP
+    - ThiTruongVaoVien_MT
+    - LeDao_MP
+    - LeDao_MT
+    - MiMat_MP
+    - MiMat_MT
+    - KetMac_MP
+    - KetMac_MT
+    - TinhHinhMatHot_MP
+    - TinhHinhMatHot_MT
+    - GiacMac_MP
+    - GiacMac_MT
+    - CungMac_MP
+    - CungMac_MT
+    - TienPhong_MP
+    - TienPhong_MT
+    - MongMat_MP
+    - MongMat_MT
+    - DongTuPhanXa_MP
+    - DongTuPhanXa_MT
+    - ThuyTinhThe_MP
+    - ThuyTinhThe_MT
+    - DichKinh_MP
+    - DichKinh_MT
+    - VongMac_MP
+    - VongMac_MT
+    - GaiThi_MP
+    - GaiThi_MT
+    - HoangDiem_MP
+    - HoangDiem_MT
+    - SoiAnhDongTu_MP
+    - SoiAnhDongTu_MT
+    - TinhHinhNhanCau_MP
+    - TinhHinhNhanCau_MT
+    - HoMat_MP
+    - HoMat_MT
+    - ThiLuc_MP
+    - ThiLuc_MT
+    - ThiLucLoKinh_MP
+    - ThiLucLoKinh_MT
+    - ChieuDaiTrucNhanCau_MP
+    - ChieuDaiTrucNhanCau_MT
+    - NhinXa_KK_MP
+    - NhinXa_KK_MT
+    - NhinXa_Cau_MP
+    - NhinXa_Cau_MT
+    - NhinXa_Tru_MP
+    - NhinXa_Tru_MT
+    - NhinXa_Truc_MP
+    - NhinXa_Truc_MT
+    - NhinXa_CK_MP
+    - NhinXa_CK_MT
+    - NhinXa_Add_MP
+    - NhinXa_Add_MT
+    - NhinXa_KCDT
+    - NhinGan_KK_MP
+    - NhinGan_KK_MT
+    - NhinGan_Cau_MP
+    - NhinGan_Cau_MT
+    - NhinGan_Tru_MP
+    - NhinGan_Tru_MT
+    - NhinGan_Truc_MP
+    - NhinGan_Truc_MT
+    - NhinGan_CK_MP
+    - NhinGan_CK_MT
+    - NhinGan_Add_MP
+    - NhinGan_Add_MT
+    - NhinGan_KCDT
+    - LoiDan
+    - NguoiThucHien
+    - KC_KK_MP
+    - KC_KK_MT
+    - TrangThai
+    - MaPhongKham
+    - GhiChu
+    - KXHT_ChuaChinh_MP
+    - KXHT_ChuaChinh_MT
+    - KXHT_DaChinh_MT
+    - KXHT_DaChinh_MP
+    - KhoangCachDongTuXa
+    - KhoangCachDongTuGan
+    - STTKetThuc
+    - NgayDo
+    - CongNhinGan
+    - ThiLucCongNhinGan
+    - KinhApTrong
+    - KinhDaTrong
+    - KinhDoiMau
+    - KinhHaiTrong
+    - KinhNhinGan
+    - KinhPoly
+    - KinhNhinXa
+    - TinhTrangKinh
+    - ThoiGianSuDung
+    - SoLuong
+    - bKinhXuoc
+    - KXHT_KK_MP_Xa
+    - KXHT_KK_MT_Xa
+    - KXHT_Cau_MP_Xa
+    - KXHT_Cau_MT_Xa
+    - KXHT_Tru_MP_Xa
+    - KXHT_Tru_MT_Xa
+    - KXHT_Truc_MP_Xa
+    - KXHT_Truc_MT_Xa
+    - KXHT_CK_MP_Xa
+    - KXHT_CK_MT_Xa
+    - KXHT_Add_MP_Xa
+    - KXHT_Add_MT_Xa
+    - KXHT_KCDT_Xa
+    - KXSLDT_KK_MP_Xa
+    - KXSLDT_KK_MT_Xa
+    - KXSLDT_Cau_MP_Xa
+    - KXSLDT_Cau_MT_Xa
+    - KXSLDT_Tru_MP_Xa
+    - KXSLDT_Tru_MT_Xa
+    - KXSLDT_Truc_MP_Xa
+    - KXSLDT_Truc_MT_Xa
+    - KXSLDT_CK_MP_Xa
+    - KXSLDT_CK_MT_Xa
+    - KXSLDT_Add_MP_Xa
+    - KXSLDT_Add_MT_Xa
+    - KXSLDT_KCDT_Xa
+    - ThiLucLoKinh_MP_Xa
+    - ThiLucLoKinh_MT_Xa
+    - Skiascopy_SauLiet_MP
+    - Skiascopy_SauLiet_MT
+    - ThoiGianTraThuoc
+    - Anh1
+    - Anh2
+    - Anh3
+    - Anh4
+    - Anh5
+    - Anh6
+    - Anh7
+    - Anh8
+    - iKhucXaMay
+    - iDoSoKinhBangmay
+    - iKhucXaHienTai
+    - iKhucXaSauLietDieuTiet
+    - iDoNhanAp
+    - iDoDoDayGiacMac
+    - iChieuDaiTrucNhanCau
+    - iDonKinh
+    - NhanAp_Maklakov_MP
+    - NhanAp_Maklakov_MT
+    - KXSLDT_ThiLucLoKinh_MP
+    - KXSLDT_ThiLucLoKinh_MT
   HoSoKhamBenhNgoaiTru:
     type: fact
     date_column: NgayVaoKham
     merge_script: src/db/templates/sql/fact/DimLuotKham_merge.sql
-    # Mục đích: Định nghĩa số ngày tua ngược cửa sổ incremental để tránh sót dữ liệu đến trễ.
-    # Khi dùng: Dùng cho bảng phát sinh có khả năng điều chỉnh/hạch toán lại trong các ngày gần đây.
-    # Giá trị hợp lệ: int >= 0.
-    # Ý nghĩa: 0 = chỉ nạp đúng from_date; N > 0 = dịch lùi from_date thêm N ngày trước khi lọc.
     lookback_days: 1
-    # Mục đích: Loại các cột có kiểu dữ liệu đặc biệt gây rủi ro BCP/không cần cho downstream.
-    # Khi dùng: Dùng khi bảng nguồn chứa cột binary/blob/xml/text lớn hoặc kiểu không tương thích.
-    # Giá trị hợp lệ: list[string], mỗi phần tử là DATA_TYPE trong INFORMATION_SCHEMA.COLUMNS.
-    # Ý nghĩa: Cột nào có DATA_TYPE thuộc danh sách này sẽ bị loại khỏi dynamic SELECT.
-    exclude_datatypes:
-      - image
-      - text
-      - ntext
-      - sql_variant
-      - xml
-
+    selected_columns:
+    - MaHoSo
+    - SoVaoVien
+    - STT
+    - MaBenhNhan
+    - NgayVaoKham
+    - TrangThaiPhieu
+    - GhiChu
+    - MaDoiTuongBenhNhan
+    - LyDoVaoKham
+    - ChanDoan
+    - KetLuan
+    - MaBenh1
+    - MaBenh2
+    - MaBenh3
+    - SoTheBHYT
+    - NgayBatDau
+    - NgayHetHan
+    - MaDoiTuongBaoHiem
+    - MaLoaiBaoHiem
+    - MaNoiDangKyKCBBD
+    - MaXuTri
+    - MaBacSy
+    - MaHoSoTuSinh
+    - ThuongOrCapCuu
+    - DungTraiTuyen
+    - NgayVaoKhamDP
+    - DuyetBHLai
+    - TongSoNgayDT
+    - NgayVaoKhamDP2
+    - bBenhNhanAo
+    - TrangThaiThanhToan
+    - bNhapVien
+    - NgayChuyen
+    - TrangThaiCapThuoc
+    - SoChuyenVien
+    - ChuyenVienNoiTinh
+    - bUuTien
+    - DTMienPhi
+    - bDieuTriNgoaiTru
+    - bDaDieuTriXong
+    - CDNoiGioiThieu_MaBenh_CDPhongKham_MaBenh_KeDon_ChuyenVien_VaoKhoa_DTNgT
+    - NoiChuyenDen
+    - MaLoaiKham
+    - TenLoaiKham
+    - MaKhamBenhSan
+    - TenKhamBenhSan
+    - Mach
+    - NhietDo
+    - HuyetAp
+    - NhipTho
+    - ChieuCao
+    - CanNang
+    - MaDonThuoc
+    - MaDonThuocDY
+    - NgayDuyetBaoHiem
+    - PhanTramBaoHiem
+    - QuaTrinhBenhLy
+    - TienSuBenhBanThan
+    - TienSuBenhGiaDinh
+    - MaNguoiDuyet
+    - GhiChuMaBenh1
+    - GhiChuMaBenh2
+    - GhiChuMaBenh3
+    - iChanDoanKhoaPHCN
+    - iCapCuuNoiOrNgoai
+    - bThuGiayChuyenVien
+    - MaKhoaVaoVien
+    - TongTienDuyet
+    - HanhChinhOrTruc
+    - MaKhuVuc
+    - MaNhomTaiNan
+    - MaNoiChuyenDen
+    - NgayRaVien
+    - NgayThanhToan
+    - SoChuyenDen
+    - MaNguoiTiepNhan
+    - MaDoiTuongBenhNhanChuan
+    - bBNManTinh
+    - SoBAManTinh
+    - MaBenhYHCT1
+    - MaBenhYHCT2
+    - GhiChuMaBenhYHCT1
+    - GhiChuMaBenhYHCT2
+    - SoLuuTruRaVien
+    - NgayCapSoLuuTruRaVien
+    - MaNguoiLuuTru
+    - LOCK
+    - NgayDu5Nam
+    - bGiayChungNhanKhongCungChiTra
+    - GiamDinh
+    - MaBenhChinh
+    - sysdate
+    - MaBacSyChuyen
+    - MaGoiKhamTheoDoan
+    - TrangThaiChiDinhDoan
+    - TrangThaiHoSoDoanDenKham
+    - TrangThaiPhatSo
+    - STT_Doan
+    - Barcode_Doan
+    - NgayPhatSo
+    - DiaChiTheBHYT
+    - BoPhan
+    - ChucVu
+    - MaNguoiThanhToan
+    - TrieuChungLamSang
+    - ToanThan
+    - CacBoPhan
+    - CachXuLy
+    - TuMayChu
+    - MaLienKet
+    - MaNguonKhach
+    - TuanHoan
+    - HoHap
+    - TieuHoa
+    - Than_TietNieu
+    - NoiTiet
+    - Co_Xuong_Khop
+    - ThanKinh
+    - TamThan
+    - ThongTuyen
+    - SoTheAo
+    - StateXuatXML
+    - SoNghiBHXH
+    - HoSoVip
+    - NgayDieuTriNgoaiTru
+    - VongBung
+    - NgoaiMat
+    - TrongMieng
+    - NgayMienCCT
+    - HoTenCha
+    - HoTenMe
+    - TuNgayNghiBHXH
+    - DenNgayNghiBHXH
+    - NgayLapPhieuBHXH
+    - MaHoSoHienThi
+    - DaInMau01
+    - SoTienTamThuDuKien
+    - MaTiepNhan_KBYT
+    - MaTiepNhan_GTHH
+    - MaLichHen_CRM
+    - bitGuiSMS
+    - PhanLoaiTheLuc
+    - TaiPhai1000Hz
+    - TaiPhai4000Hz
+    - TaiTrai1000Hz
+    - TaiTrai4000Hz
+    - MaMP_CoKinh
+    - MaMP_KhongKinh
+    - MaMT_CoKinh
+    - MaMT_KhongKinh
+    - LoaiSucKhoe
+    - TieuSuBenhNhan
+    - DuBaoSucKhoe
+    - PhongNgua
+    - KetLuanVaTuVan
+    - KetQuaDieuTri
+    - ChanDoanMP
+    - ChanDoanMT
+    - ChanDoan2Mat
+    - MaBenhMP
+    - MaBenhMT
+    - MaBenh2Mat
+    - LinkMaBenh
+    - ChanDoanSoBoMat
+    - ChanDoanXacDinhMat
+    - MaXuTriMat
+    - PhanTruoc_MP
+    - PhanTruoc_MT
+    - DayMat_MP
+    - DayMat_MT
+    - VanNhan_MP
+    - VanNhan_MT
+    - TinhTrangRaVien
+    - MaSoBHXH
+    - MaBenhKemMat
+    - TenBenhKemMat
+    - LinhThuocTheoHen
+    - ThuHoiDeNghiTT
+    - KTKeDon
+    - HuongDieuTri
+    - CodeTraKQ
+    - StateCheckIn
+    - StateXuatXML130
+    - IDLichHen
+    - SoTheBHYTNghiBHXH
 facilities:
   hanoi:
     nguon_dulieu_key: 2
@@ -246,8 +681,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
-import pyodbc
-
 
 @dataclass(frozen=True)
 class ExtractPlan:
@@ -257,6 +690,7 @@ class ExtractPlan:
     to_date: date
     select_sql: str
     selected_columns: tuple[str, ...]
+    projected_columns: tuple[str, ...]
 
 
 class BaseExtractor:
@@ -267,6 +701,23 @@ class BaseExtractor:
 
     def __init__(self, production_connection: str) -> None:
         self.production_connection = production_connection
+
+    @staticmethod
+    def _sanitize_identifier(name: str) -> str:
+        clean = str(name).strip()
+        if not clean:
+            raise ValueError("Tên cột whitelist không được rỗng")
+        return clean
+
+    @classmethod
+    def _build_whitelist_projections(cls, selected_columns: list[str] | tuple[str, ...]) -> list[str]:
+        if not selected_columns:
+            raise ValueError("selected_columns bắt buộc có ít nhất 1 cột")
+        projections: list[str] = []
+        for column in selected_columns:
+            column_name = cls._sanitize_identifier(column)
+            projections.append(f"[{column_name}]")
+        return projections
 
     @staticmethod
     def normalize_date(value: object | None, fallback: date) -> date:
@@ -286,40 +737,9 @@ class BaseExtractor:
             raise ValueError("lookback_days phải >= 0")
         return from_date - timedelta(days=lookback_days)
 
-    def build_dynamic_select_columns(
-        self,
-        connection: pyodbc.Connection,
-        table_name: str,
-        exclude_datatypes: list[str] | tuple[str, ...] | None,
-    ) -> list[str]:
-        excluded = {dtype.strip().lower() for dtype in (exclude_datatypes or []) if str(dtype).strip()}
-
-        sql = """
-            SELECT COLUMN_NAME, DATA_TYPE
-            FROM INFORMATION_SCHEMA.COLUMNS
-            WHERE TABLE_SCHEMA = 'dbo'
-              AND TABLE_NAME = ?
-            ORDER BY ORDINAL_POSITION;
-        """
-        cursor = connection.cursor()
-        cursor.execute(sql, table_name)
-
-        selected: list[str] = []
-        for row in cursor.fetchall():
-            column_name = str(row[0])
-            data_type = str(row[1]).lower()
-            if data_type in excluded:
-                continue
-            selected.append(column_name)
-
-        if not selected:
-            raise ValueError(f"Không còn cột hợp lệ sau khi exclude_datatypes cho bảng {table_name}")
-
-        return selected
-
     @staticmethod
-    def build_select_sql(table_name: str, date_column: str, columns: list[str], from_date: date, to_date: date) -> str:
-        projected = ", ".join([f"[{col}]" for col in columns])
+    def build_select_sql(table_name: str, date_column: str, projections: list[str], from_date: date, to_date: date) -> str:
+        projected = ", ".join(projections)
         return (
             f"SELECT {projected} FROM dbo.[{table_name}] WITH (NOLOCK) "
             f"WHERE CAST([{date_column}] AS DATE) >= '{from_date:%Y-%m-%d}' "
@@ -328,24 +748,33 @@ class BaseExtractor:
 
     def build_extract_plan(
         self,
-        connection: pyodbc.Connection,
         table_name: str,
         date_column: str,
         from_date: date,
         to_date: date,
         lookback_days: int,
-        exclude_datatypes: list[str] | tuple[str, ...] | None,
+        selected_columns: list[str] | tuple[str, ...],
     ) -> ExtractPlan:
         effective_from_date = self.compute_effective_from_date(from_date=from_date, lookback_days=lookback_days)
-        selected_columns = self.build_dynamic_select_columns(
-            connection=connection,
-            table_name=table_name,
-            exclude_datatypes=exclude_datatypes,
-        )
+        physical_columns = [self._sanitize_identifier(column) for column in selected_columns]
+
+        if not physical_columns:
+            raise ValueError(f"selected_columns rỗng cho bảng {table_name}")
+
+        select_projections = self._build_whitelist_projections(selected_columns)
+        final_projections = [*select_projections]
+        final_columns = [*physical_columns]
+
+        if len(final_columns) != len(final_projections):
+            raise ValueError(
+                f"Lệch schema projection cho bảng {table_name}: "
+                f"physical_columns={len(final_columns)} != select_projections={len(final_projections)}"
+            )
+
         select_sql = self.build_select_sql(
             table_name=table_name,
             date_column=date_column,
-            columns=selected_columns,
+            projections=final_projections,
             from_date=effective_from_date,
             to_date=to_date,
         )
@@ -355,7 +784,8 @@ class BaseExtractor:
             effective_from_date=effective_from_date,
             to_date=to_date,
             select_sql=select_sql,
-            selected_columns=tuple(selected_columns),
+            selected_columns=tuple(final_columns),
+            projected_columns=tuple(final_projections),
         )
 ```
 
@@ -364,7 +794,6 @@ class BaseExtractor:
 from __future__ import annotations
 
 import asyncio
-import subprocess
 from contextlib import contextmanager
 from datetime import date, datetime
 from pathlib import Path
@@ -433,20 +862,6 @@ class BaseLoader:
         cursor = connection.cursor()
         cursor.execute(safe_sql, params or ())
 
-    def run_bcp_utf16le(self, query: str, output_file: str) -> None:
-        command = [
-            "bcp",
-            query,
-            "queryout",
-            output_file,
-            "-w",
-            "-t\t",
-            "-r\n",
-            "-q",
-        ]
-        self._log(f"Thực thi BCP UTF-16-LE: {' '.join(command)}")
-        subprocess.run(command, check=True, shell=False)
-
     def _execute_core(self, connection: pyodbc.Connection) -> None:
         raise NotImplementedError("Loader con phải override _execute_core")
 
@@ -481,13 +896,9 @@ class GenericTableLoader(BaseLoader):
         connection_string: str,
         table_name: str,
         merge_sql_path: str | None = None,
-        bcp_query: str | None = None,
-        bcp_output_file: str | None = None,
     ) -> None:
         super().__init__(connection_string=connection_string, table_name=table_name)
         self.merge_sql_path = merge_sql_path
-        self.bcp_query = bcp_query
-        self.bcp_output_file = bcp_output_file
 
     @staticmethod
     def _resolve_date(value: Any) -> date | None:
@@ -521,9 +932,6 @@ class GenericTableLoader(BaseLoader):
             self._log(f"Khoảng thời gian: {from_date} -> {to_date}")
         else:
             self._log("Không có tham số ngày, chuyển sang chế độ kiểm tra cơ bản")
-
-        if self.bcp_query and self.bcp_output_file:
-            self.run_bcp_utf16le(self.bcp_query, self.bcp_output_file)
 
         if self.merge_sql_path:
             sql_path = Path(self.merge_sql_path)

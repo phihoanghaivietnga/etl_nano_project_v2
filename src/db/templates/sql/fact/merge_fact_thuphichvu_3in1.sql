@@ -315,6 +315,8 @@ WHEN NOT MATCHED BY TARGET THEN
         source.DaThucHien,
         source.TrangThaiPhieu
     );
+	
+/*
 GO
 
 -- ============================================================
@@ -333,3 +335,4 @@ WHERE NgayDenKham >= CAST('{date_from}' AS DATE)
 GROUP BY LoaiHinh
 ORDER BY LoaiHinh;
 GO
+*/

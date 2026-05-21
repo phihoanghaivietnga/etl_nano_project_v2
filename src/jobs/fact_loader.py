@@ -1,9 +1,5 @@
 from __future__ import annotations
 
-import os
-import re
-import subprocess
-import tempfile
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -23,7 +19,7 @@ class FactTableSpec:
     date_column: str
     merge_script: str
     lookback_days: int
-    exclude_datatypes: tuple[str, ...]
+    selected_columns: tuple[str, ...]
 
 
 class FactLoader(BaseLoader):
@@ -37,11 +33,6 @@ class FactLoader(BaseLoader):
         "DoThiLuc": ("MaHoSo", "NgayDo"),
         "HoSoKhamBenhNgoaiTru": ("MaHoSo",),
     }
-
-    REVENUE_GUARD_SQL_FILES: tuple[str, ...] = (
-        "merge_fact_thuphichvu_3in1.sql",
-        "FactThuPhiDichVu_ThuPhiGoi_merge.sql",
-    )
 
     def __init__(
         self,
@@ -80,10 +71,10 @@ class FactLoader(BaseLoader):
             date_column = str(cfg.get("date_column", "")).strip()
             merge_script = str(cfg.get("merge_script", "")).strip()
             lookback_days = int(cfg.get("lookback_days", 0))
-            exclude_datatypes = tuple(str(x).strip() for x in cfg.get("exclude_datatypes", []) if str(x).strip())
+            selected_columns = tuple(str(x).strip() for x in cfg.get("selected_columns", []) if str(x).strip())
 
             key_columns = self.TABLE_KEY_COLUMNS.get(table_name)
-            if not key_columns or not date_column or not merge_script:
+            if not key_columns or not date_column or not merge_script or not selected_columns:
                 continue
 
             specs.append(
@@ -93,7 +84,7 @@ class FactLoader(BaseLoader):
                     date_column=date_column,
                     merge_script=merge_script,
                     lookback_days=lookback_days,
-                    exclude_datatypes=exclude_datatypes,
+                    selected_columns=selected_columns,
                 )
             )
 
@@ -102,85 +93,79 @@ class FactLoader(BaseLoader):
 
         return tuple(specs)
 
-    @staticmethod
-    def _parse_connection_string(connection_string: str) -> dict[str, str]:
-        parsed: dict[str, str] = {}
-        for item in connection_string.split(";"):
-            if not item or "=" not in item:
-                continue
-            key, value = item.split("=", 1)
-            parsed[key.strip().upper()] = value.strip()
-        return parsed
-
-    @staticmethod
-    def _build_bcp_auth_args(conn_parts: dict[str, str]) -> list[str]:
-        if conn_parts.get("UID") and conn_parts.get("PWD"):
-            return ["-U", conn_parts["UID"], "-P", conn_parts["PWD"]]
-        return ["-T"]
-
     def _truncate_table(self, connection: pyodbc.Connection, schema_name: str, table_name: str) -> None:
         sql = f"TRUNCATE TABLE [{schema_name}].[{table_name}];"
         self._log(f"TRUNCATE {schema_name}.{table_name}")
         self.execute_sql_sync(connection, sql)
-        # Giải phóng lock ngay để tiến trình BCP IN (session khác) không bị treo chờ.
-        connection.commit()
 
-    def _run_bcp_queryout(self, query: str, output_file: str, prod_parts: dict[str, str]) -> None:
-        command = [
-            "bcp",
-            query,
-            "queryout",
-            output_file,
-            "-S",
-            prod_parts.get("SERVER", ""),
-            "-d",
-            prod_parts.get("DATABASE", ""),
-            *self._build_bcp_auth_args(prod_parts),
-            "-w",
-            "-t\t",
-            "-r\n",
-            "-q",
-        ]
-        subprocess.run(command, check=True, shell=False)
+    @staticmethod
+    def _build_explicit_insert_sql(schema_name: str, table_name: str, selected_columns: tuple[str, ...]) -> str:
+        if not selected_columns:
+            raise ValueError(f"Không có selected_columns để build INSERT cho bảng {table_name}")
 
-    def _run_bcp_in(self, full_table_name: str, input_file: str, dm_parts: dict[str, str]) -> None:
-        command = [
-            "bcp",
-            full_table_name,
-            "in",
-            input_file,
-            "-S",
-            dm_parts.get("SERVER", ""),
-            "-d",
-            dm_parts.get("DATABASE", ""),
-            *self._build_bcp_auth_args(dm_parts),
-            "-w",
-            "-t\t",
-            "-r\n",
-            "-q",
-        ]
-        subprocess.run(command, check=True, shell=False)
+        column_clause = ", ".join([f"[{column}]" for column in selected_columns])
+        placeholders = ", ".join(["?"] * len(selected_columns))
+        return f"INSERT INTO [{schema_name}].[{table_name}] ({column_clause}) VALUES ({placeholders});"
 
-    # Tầng 1: Global Transient Staging (TRUNCATE + BCP IN)
-    def _load_to_global_staging(self, connection: pyodbc.Connection, plan: ExtractPlan) -> None:
-        self._truncate_table(connection, self.LANDING_SCHEMA, plan.table_name)
+    @staticmethod
+    def _table_has_identity(cursor: pyodbc.Cursor, schema_name: str, table_name: str) -> bool:
+        object_name = f"[{schema_name}].[{table_name}]"
+        cursor.execute(
+            "SELECT OBJECTPROPERTY(OBJECT_ID(?), 'TableHasIdentity');",
+            object_name,
+        )
+        result = cursor.fetchone()
+        return bool(result and result[0] == 1)
 
-        prod_parts = self._parse_connection_string(self.production_connection)
-        dm_parts = self._parse_connection_string(self.connection_string)
+    @staticmethod
+    def _set_identity_insert(cursor: pyodbc.Cursor, schema_name: str, table_name: str, enabled: bool) -> None:
+        switch = "ON" if enabled else "OFF"
+        cursor.execute(f"SET IDENTITY_INSERT [{schema_name}].[{table_name}] {switch};")
 
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".txt") as tmp_file:
-            temp_path = tmp_file.name
+    # Tầng 1: Global Transient Staging (PyODBC SELECT -> TRUNCATE 1 lần -> executemany theo chunk)
+    def _load_to_global_staging(self, plan: ExtractPlan) -> None:
+        insert_sql = self._build_explicit_insert_sql(
+            schema_name=self.LANDING_SCHEMA,
+            table_name=plan.table_name,
+            selected_columns=plan.selected_columns,
+        )
 
-        try:
-            self._run_bcp_queryout(query=plan.select_sql, output_file=temp_path, prod_parts=prod_parts)
-            self._run_bcp_in(
-                full_table_name=f"{self.LANDING_SCHEMA}.{plan.table_name}",
-                input_file=temp_path,
-                dm_parts=dm_parts,
-            )
-        finally:
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
+        total_rows = 0
+        with pyodbc.connect(self.production_connection, autocommit=True) as production_connection:
+            production_cursor = production_connection.cursor()
+            production_cursor.execute(plan.select_sql)
+
+            with self.get_db_context() as staging_connection:
+                # Nguyên tắc 1: TRUNCATE chỉ chạy đúng 1 lần trước vòng lặp chunking
+                self._truncate_table(staging_connection, self.LANDING_SCHEMA, plan.table_name)
+
+                staging_cursor = staging_connection.cursor()
+                staging_cursor.fast_executemany = False
+                has_identity = self._table_has_identity(staging_cursor, self.LANDING_SCHEMA, plan.table_name)
+
+                if has_identity:
+                    self._log(f"Bật IDENTITY_INSERT cho {self.LANDING_SCHEMA}.{plan.table_name}")
+                    self._set_identity_insert(staging_cursor, self.LANDING_SCHEMA, plan.table_name, enabled=True)
+
+                # Nguyên tắc 2: INSERT động tường minh theo selected_columns
+                try:
+                    while True:
+                        rows = production_cursor.fetchmany(self.batch_size)
+                        if not rows:
+                            break
+
+                        staging_cursor.executemany(insert_sql, rows)
+                        total_rows += len(rows)
+                finally:
+                    if has_identity:
+                        self._set_identity_insert(staging_cursor, self.LANDING_SCHEMA, plan.table_name, enabled=False)
+                        self._log(f"Tắt IDENTITY_INSERT cho {self.LANDING_SCHEMA}.{plan.table_name}")
+
+                staging_connection.commit()
+
+        self._log(
+            f"Hoàn tất nạp Tầng 1 bằng PyODBC cho {plan.table_name}: {total_rows} dòng, chunk_size={self.batch_size}"
+        )
 
     def _get_common_columns(
         self,
@@ -271,35 +256,15 @@ class FactLoader(BaseLoader):
             .replace("{date_to}", f"{date_to:%Y-%m-%d}")
         )
 
-    @staticmethod
-    def validate_sql_revenue_rules(sql_text: str, sql_path: Path) -> None:
-        """
-        Guard SMI-3: bảo vệ quy tắc fallback doanh thu dùng COALESCE/ISNULL.
-        Chỉ áp dụng cho các template doanh thu yêu cầu fallback.
-        """
-
-        normalized_name = sql_path.name.lower()
-        needs_guard = normalized_name in {name.lower() for name in FactLoader.REVENUE_GUARD_SQL_FILES}
-        if not needs_guard:
-            return
-
-        fallback_pattern = re.compile(r"\b(COALESCE|ISNULL)\s*\(\s*[^,]+\s*,\s*[^\)]+\)", re.IGNORECASE)
-        if fallback_pattern.search(sql_text):
-            return
-
-        raise ValueError(
-            f"SQL template {sql_path} không đạt guard doanh thu SMI-3: thiếu fallback COALESCE/ISNULL."
-        )
-
     # Tầng 3: Datamart dm (chỉ thực thi SQL template có sẵn)
     def _merge_to_datamart_using_template(self, connection: pyodbc.Connection, spec: FactTableSpec, date_from: date, date_to: date) -> None:
         sql_path = Path(spec.merge_script)
         template = sql_path.read_text(encoding="utf-8")
         rendered = self._substitute_sql_template(template, date_from=date_from, date_to=date_to)
-        self.validate_sql_revenue_rules(rendered, sql_path)
         self.execute_sql_sync(connection, rendered)
 
     def _execute_core(self, connection: pyodbc.Connection, *args: Any, **kwargs: Any) -> None:
+        _ = connection
         from_date_input = args[0] if len(args) > 0 else kwargs.get("from_date")
         to_date_input = args[1] if len(args) > 1 else kwargs.get("to_date")
 
@@ -308,27 +273,28 @@ class FactLoader(BaseLoader):
         from_date = self.extractor.normalize_date(from_date_input, fallback=to_date)
 
         for spec in self.fact_specs:
-            with pyodbc.connect(self.production_connection, autocommit=True) as prod_conn:
-                plan = self.extractor.build_extract_plan(
-                    connection=prod_conn,
-                    table_name=spec.table_name,
-                    date_column=spec.date_column,
-                    from_date=from_date,
-                    to_date=to_date,
-                    lookback_days=spec.lookback_days,
-                    exclude_datatypes=spec.exclude_datatypes,
-                )
-
-            self._load_to_global_staging(connection, plan)
-            self._upsert_from_global_to_facility_staging(
-                connection=connection,
-                spec=spec,
-                from_date=plan.effective_from_date,
+            plan = self.extractor.build_extract_plan(
+                table_name=spec.table_name,
+                date_column=spec.date_column,
+                from_date=from_date,
                 to_date=to_date,
+                lookback_days=spec.lookback_days,
+                selected_columns=spec.selected_columns,
             )
-            self._merge_to_datamart_using_template(
-                connection=connection,
-                spec=spec,
-                date_from=plan.effective_from_date,
-                date_to=to_date,
-            )
+
+            self._load_to_global_staging(plan)
+
+            with self.get_db_context() as merge_connection:
+                self._upsert_from_global_to_facility_staging(
+                    connection=merge_connection,
+                    spec=spec,
+                    from_date=plan.effective_from_date,
+                    to_date=to_date,
+                )
+                self._merge_to_datamart_using_template(
+                    connection=merge_connection,
+                    spec=spec,
+                    date_from=plan.effective_from_date,
+                    date_to=to_date,
+                )
+                merge_connection.commit()

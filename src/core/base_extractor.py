@@ -3,8 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
-import pyodbc
-
 
 @dataclass(frozen=True)
 class ExtractPlan:
@@ -17,14 +15,6 @@ class ExtractPlan:
     projected_columns: tuple[str, ...]
 
 
-@dataclass(frozen=True)
-class DynamicColumnProjection:
-    column_name: str
-    data_type: str
-    select_expression: str
-    is_masked: bool
-
-
 class BaseExtractor:
     """
     Lớp nền chỉ chịu trách nhiệm EXTRACT.
@@ -33,6 +23,23 @@ class BaseExtractor:
 
     def __init__(self, production_connection: str) -> None:
         self.production_connection = production_connection
+
+    @staticmethod
+    def _sanitize_identifier(name: str) -> str:
+        clean = str(name).strip()
+        if not clean:
+            raise ValueError("Tên cột whitelist không được rỗng")
+        return clean
+
+    @classmethod
+    def _build_whitelist_projections(cls, selected_columns: list[str] | tuple[str, ...]) -> list[str]:
+        if not selected_columns:
+            raise ValueError("selected_columns bắt buộc có ít nhất 1 cột")
+        projections: list[str] = []
+        for column in selected_columns:
+            column_name = cls._sanitize_identifier(column)
+            projections.append(f"[{column_name}]")
+        return projections
 
     @staticmethod
     def normalize_date(value: object | None, fallback: date) -> date:
@@ -52,55 +59,6 @@ class BaseExtractor:
             raise ValueError("lookback_days phải >= 0")
         return from_date - timedelta(days=lookback_days)
 
-    def build_dynamic_select_columns(
-        self,
-        connection: pyodbc.Connection,
-        table_name: str,
-        exclude_datatypes: list[str] | tuple[str, ...] | None,
-    ) -> list[DynamicColumnProjection]:
-        excluded = {dtype.strip().lower() for dtype in (exclude_datatypes or []) if str(dtype).strip()}
-
-        sql = """
-            SELECT COLUMN_NAME, DATA_TYPE
-            FROM INFORMATION_SCHEMA.COLUMNS
-            WHERE TABLE_SCHEMA = 'dbo'
-              AND TABLE_NAME = ?
-            ORDER BY ORDINAL_POSITION;
-        """
-        cursor = connection.cursor()
-        cursor.execute(sql, table_name)
-
-        selected: list[DynamicColumnProjection] = []
-        for row in cursor.fetchall():
-            column_name = str(row[0])
-            data_type = str(row[1]).lower()
-
-            if data_type in excluded:
-                select_expression = f"CAST(NULL AS VARCHAR(1)) AS [{column_name}]"
-                selected.append(
-                    DynamicColumnProjection(
-                        column_name=column_name,
-                        data_type=data_type,
-                        select_expression=select_expression,
-                        is_masked=True,
-                    )
-                )
-                continue
-
-            selected.append(
-                DynamicColumnProjection(
-                    column_name=column_name,
-                    data_type=data_type,
-                    select_expression=f"[{column_name}]",
-                    is_masked=False,
-                )
-            )
-
-        if not selected:
-            raise ValueError(f"Không tìm thấy metadata cột cho bảng {table_name}")
-
-        return selected
-
     @staticmethod
     def build_select_sql(table_name: str, date_column: str, projections: list[str], from_date: date, to_date: date) -> str:
         projected = ", ".join(projections)
@@ -112,26 +70,33 @@ class BaseExtractor:
 
     def build_extract_plan(
         self,
-        connection: pyodbc.Connection,
         table_name: str,
         date_column: str,
         from_date: date,
         to_date: date,
         lookback_days: int,
-        exclude_datatypes: list[str] | tuple[str, ...] | None,
+        selected_columns: list[str] | tuple[str, ...],
     ) -> ExtractPlan:
         effective_from_date = self.compute_effective_from_date(from_date=from_date, lookback_days=lookback_days)
-        metadata_columns = self.build_dynamic_select_columns(
-            connection=connection,
-            table_name=table_name,
-            exclude_datatypes=exclude_datatypes,
-        )
-        selected_columns = [item.column_name for item in metadata_columns]
-        projected_columns = [item.select_expression for item in metadata_columns]
+        physical_columns = [self._sanitize_identifier(column) for column in selected_columns]
+
+        if not physical_columns:
+            raise ValueError(f"selected_columns rỗng cho bảng {table_name}")
+
+        select_projections = self._build_whitelist_projections(selected_columns)
+        final_projections = [*select_projections]
+        final_columns = [*physical_columns]
+
+        if len(final_columns) != len(final_projections):
+            raise ValueError(
+                f"Lệch schema projection cho bảng {table_name}: "
+                f"physical_columns={len(final_columns)} != select_projections={len(final_projections)}"
+            )
+
         select_sql = self.build_select_sql(
             table_name=table_name,
             date_column=date_column,
-            projections=projected_columns,
+            projections=final_projections,
             from_date=effective_from_date,
             to_date=to_date,
         )
@@ -141,6 +106,6 @@ class BaseExtractor:
             effective_from_date=effective_from_date,
             to_date=to_date,
             select_sql=select_sql,
-            selected_columns=tuple(selected_columns),
-            projected_columns=tuple(projected_columns),
+            selected_columns=tuple(final_columns),
+            projected_columns=tuple(final_projections),
         )

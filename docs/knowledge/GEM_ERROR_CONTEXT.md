@@ -80,11 +80,40 @@
 ### Cách xử lý chuẩn
 - Không được loại cột khỏi projection theo `exclude_datatypes`.
 - Với cột thuộc datatype bị loại trừ, phải mask cột tại nguồn bằng:
-  - `CAST(NULL AS VARCHAR(1)) AS [TenCot]` (ưu tiên)
-  - hoặc `NULL AS [TenCot]` nếu phù hợp.
+  - `CAST(NULL AS NVARCHAR(MAX)) AS [TenCot]` (bắt buộc khi chạy BCP `-w`).
 - Với cột không bị loại trừ, giữ nguyên `[TenCot]`.
 - Bắt buộc giữ thứ tự cột theo `INFORMATION_SCHEMA.COLUMNS.ORDINAL_POSITION`.
 
 ### Kiểm soát phòng ngừa
 - Kiểm tra chuỗi Dynamic SELECT trước khi BCP OUT để bảo đảm khớp 100% số lượng/vị trí cột với bảng đích.
 - Không chỉnh cơ chế BCP `-w` để giữ Unicode tiếng Việt trong dữ liệu y tế.
+
+## E-ETL-BCP-METADATA-TRIM: Trailing spaces từ pyodbc làm lệch Data Type
+
+### Triệu chứng
+- Một số đợt extract phát sinh nhận diện sai `data_type` hoặc tên cột khi đọc metadata từ `INFORMATION_SCHEMA.COLUMNS`.
+- Dấu hiệu thường gặp: cột thuộc danh sách loại trừ không được mask đúng kỳ vọng.
+
+### Nguyên nhân gốc
+- Dữ liệu metadata trả về từ `pyodbc` có thể chứa khoảng trắng thừa ở đầu/cuối chuỗi.
+- Logic cũ không `.strip()` ngay khi đọc `COLUMN_NAME`/`DATA_TYPE`.
+
+### Cách xử lý chuẩn
+- Trong `BaseExtractor.build_dynamic_select_columns(...)`, bắt buộc chuẩn hóa ngay khi nhận dữ liệu:
+  - `column_name = str(row[0]).strip()`
+  - `data_type = str(row[1]).strip().lower()`
+
+## E-ETL-BCP-CONNECTION-001: BCP OUT/IN thiếu tham số kết nối
+
+### Triệu chứng
+- Tiến trình `bcp` thất bại ngay khi chạy `queryout` hoặc `in` do không xác định được server/database/auth.
+- Log lỗi thường xoay quanh kết nối hoặc không truy cập được SQL Server.
+
+### Nguyên nhân gốc
+- Command BCP không gắn đủ `-S`, `-d`, và thông tin xác thực (`-U/-P` hoặc `-T`).
+- Dùng sai connection context: BCP OUT dùng nhầm connection đích thay vì connection nguồn Production.
+
+### Cách xử lý chuẩn
+- Parse `connection_string` bằng Regex `re.IGNORECASE` để bóc tách tham số kết nối.
+- BCP OUT bắt buộc nhận `source_connection_string` riêng.
+- BCP IN dùng connection đích của Loader và bắt buộc cờ `-w -k -E -t\t -r\n`.

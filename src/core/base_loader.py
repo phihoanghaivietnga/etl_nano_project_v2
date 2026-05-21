@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import subprocess
 from contextlib import contextmanager
 from datetime import date, datetime
 from pathlib import Path
@@ -70,20 +69,6 @@ class BaseLoader:
         cursor = connection.cursor()
         cursor.execute(safe_sql, params or ())
 
-    def run_bcp_utf16le(self, query: str, output_file: str) -> None:
-        command = [
-            "bcp",
-            query,
-            "queryout",
-            output_file,
-            "-w",
-            "-t\t",
-            "-r\n",
-            "-q",
-        ]
-        self._log("Thực thi BCP UTF-16-LE (đã ẩn nội dung query/command để bảo mật)")
-        subprocess.run(command, check=True, shell=False)
-
     def _execute_core(self, connection: pyodbc.Connection) -> None:
         raise NotImplementedError("Loader con phải override _execute_core")
 
@@ -118,13 +103,9 @@ class GenericTableLoader(BaseLoader):
         connection_string: str,
         table_name: str,
         merge_sql_path: str | None = None,
-        bcp_query: str | None = None,
-        bcp_output_file: str | None = None,
     ) -> None:
         super().__init__(connection_string=connection_string, table_name=table_name)
         self.merge_sql_path = merge_sql_path
-        self.bcp_query = bcp_query
-        self.bcp_output_file = bcp_output_file
 
     @staticmethod
     def _resolve_date(value: Any) -> date | None:
@@ -158,9 +139,6 @@ class GenericTableLoader(BaseLoader):
             self._log(f"Khoảng thời gian: {from_date} -> {to_date}")
         else:
             self._log("Không có tham số ngày, chuyển sang chế độ kiểm tra cơ bản")
-
-        if self.bcp_query and self.bcp_output_file:
-            self.run_bcp_utf16le(self.bcp_query, self.bcp_output_file)
 
         if self.merge_sql_path:
             sql_path = Path(self.merge_sql_path)

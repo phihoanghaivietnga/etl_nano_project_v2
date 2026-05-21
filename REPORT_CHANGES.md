@@ -805,3 +805,277 @@
 
 ### 6) Cập nhật báo cáo vào file yêu cầu
 - Điền đầy đủ mục `# BÁO CÁO CỦA THỢ CODE` trong `docs/prompts/20260519_1710_sync_incremental_v2.md`.
+
+## Phạm vi cập nhật theo yêu cầu 20260519_1710_sync_incremental_v3
+- Cập nhật `src/core/base_extractor.py`
+- Cập nhật `src/jobs/fact_loader.py`
+- Cập nhật `docs/knowledge/GEM_ERROR_CONTEXT.md`
+- Cập nhật `docs/knowledge/GEM_TECHNICAL_STANDARDS.md`
+- Cập nhật `PROJECT_CHRONICLE.md`
+- Cập nhật `docs/prompts/20260519_1710_sync_incremental_v3.md`
+- Cập nhật `REPORT_CHANGES.md`
+
+## Nội dung đã thực hiện
+
+### 1) Chuyển chuẩn Masking NULL sang Unicode diện rộng
+- Trong `src/core/base_extractor.py`, thay toàn bộ masking cột loại trừ từ:
+  - `CAST(NULL AS VARCHAR(1)) AS [TenCot]`
+  - sang `CAST(NULL AS NVARCHAR(MAX)) AS [TenCot]`.
+- Bổ sung kiểm tra an toàn schema 1:1:
+  - `physical_columns` và `select_projections` phải bằng nhau về số lượng trước khi sinh Dynamic SELECT.
+
+### 2) Gỡ bỏ guard Python fallback doanh thu theo quyết định Master
+- Cập nhật `src/jobs/fact_loader.py`:
+  - Xóa import `re`.
+  - Xóa hằng `REVENUE_GUARD_SQL_FILES`.
+  - Xóa hàm `validate_sql_revenue_rules(...)`.
+  - Xóa điểm gọi guard trước khi execute SQL template Datamart.
+
+### 3) Cập nhật tri thức bắt buộc
+- `docs/knowledge/GEM_ERROR_CONTEXT.md`:
+  - Đổi hướng dẫn xử lý lỗi 22005 từ `VARCHAR(1)` sang `CAST(NULL AS NVARCHAR(MAX))`.
+- `docs/knowledge/GEM_TECHNICAL_STANDARDS.md`:
+  - Chuẩn Dynamic SELECT nhấn mạnh bắt buộc dùng `NVARCHAR(MAX)` khi masking với BCP `-w`.
+- `PROJECT_CHRONICLE.md`:
+  - Bổ sung ADR-26 (Unicode masking) và ADR-27 (Technical Debt theo chỉ thị Master).
+
+### 4) Đối soát kỹ thuật
+- Xác nhận vẫn giữ cờ BCP `-w` trong luồng ETL.
+- In câu lệnh Dynamic SELECT mẫu có `NVARCHAR(MAX)` và log tiếng Việt trong terminal để đối soát SMI-2.
+
+## Phạm vi cập nhật theo yêu cầu 20260520_1110_sync_incremental_v4
+- Cập nhật `src/core/base_extractor.py`
+- Cập nhật `src/core/base_loader.py`
+- Cập nhật `src/jobs/fact_loader.py`
+- Cập nhật `docs/knowledge/GEM_ERROR_CONTEXT.md`
+- Cập nhật `docs/knowledge/GEM_CODE_MAP.md`
+- Cập nhật `PROJECT_CHRONICLE.md`
+- Cập nhật `docs/prompts/20260520_1110_sync_incremental_v4.md`
+- Cập nhật `REPORT_CHANGES.md`
+
+## Nội dung đã thực hiện
+
+### 1) Vá lỗi Stringification metadata từ pyodbc
+- Trong `BaseExtractor.build_dynamic_select_columns(...)`:
+  - `column_name = str(row[0]).strip()`
+  - `data_type = str(row[1]).strip().lower()`
+
+### 2) Chuẩn hóa BCP OUT/IN tại BaseLoader
+- Bổ sung parser connection string bằng Regex `re.IGNORECASE`.
+- `run_bcp_utf16le(...)` nhận `source_connection_string` để BCP OUT dùng đúng kết nối nguồn Production.
+- Bổ sung `run_bcp_in(...)` với bộ cờ bắt buộc:
+  - `-w -k -E -t\t -r\n`.
+- Log command BCP IN có che mật khẩu thông qua `_mask_bcp_command(...)`.
+
+### 3) Chỉnh luồng transaction biên chống deadlock ở FactLoader
+- Tầng 1 được chuẩn hóa theo thứ tự:
+  1. BCP OUT thành công.
+  2. Mở connection A để TRUNCATE landing, `commit()`, đóng ngay connection A.
+  3. BCP IN bằng subprocess session riêng.
+  4. Mở connection B mới để MERGE tầng sau.
+
+### 4) Cập nhật tầng tri thức
+- `GEM_ERROR_CONTEXT.md`:
+  - Thêm lỗi trailing spaces metadata (`E-ETL-BCP-METADATA-TRIM`).
+  - Thêm lỗi thiếu kết nối BCP (`E-ETL-BCP-CONNECTION-001`).
+- `GEM_CODE_MAP.md`:
+  - Bổ sung mục 20260520_1110 mô tả parse Regex, BCP IN mới, và transaction biên.
+- `PROJECT_CHRONICLE.md`:
+  - Chèn nguyên văn câu bắt buộc:
+    - `Cảnh báo rủi ro (Nợ kỹ thuật): Đã gỡ bỏ cơ chế Validate SQL Fallback Doanh Thu bằng Python theo quyết định của Master. Luồng ETL hiện tại hoàn toàn tin tưởng vào các file SQL Template. Nếu file SQL bị sửa sai, hệ thống sẽ không thể tự động chặn lỗi.`
+  - Bổ sung ADR-28/29/30 cho hotfix BCP v4.
+
+### 5) File Python đã sửa
+- `src/core/base_extractor.py`
+- `src/core/base_loader.py`
+- `src/jobs/fact_loader.py`
+
+## Phạm vi cập nhật theo yêu cầu 20260520_1435_sync_incremental_v5
+- Cập nhật `config/tables.yaml`
+- Cập nhật `src/core/base_extractor.py`
+- Cập nhật `src/core/base_loader.py`
+- Cập nhật `src/jobs/fact_loader.py`
+- Cập nhật `docs/knowledge/GEM_TECHNICAL_STANDARDS.md`
+- Cập nhật `docs/knowledge/GEM_CODE_MAP.md`
+- Cập nhật `PROJECT_CHRONICLE.md`
+- Cập nhật `docs/prompts/20260520_1435_sync_incremental_v5.md`
+- Cập nhật `REPORT_CHANGES.md`
+
+## Nội dung đã thực hiện
+
+### 1) Chuyển cấu hình incremental từ Black-list sang Whitelist
+- `config/tables.yaml`:
+  - Xóa toàn bộ `exclude_datatypes`.
+  - Thêm `selected_columns: []` cho 6 bảng incremental:
+    - `ThuPhiDichVu`, `ThuPhiBaoHiem`, `ThuPhiTangGiam`, `ThuPhiGoi`, `DoThiLuc`, `HoSoKhamBenhNgoaiTru`.
+
+### 2) Viết lại Extractor theo Whitelist cột
+- `src/core/base_extractor.py`:
+  - Xóa toàn bộ logic quét `INFORMATION_SCHEMA.COLUMNS` và DTO `DynamicColumnProjection`.
+  - `build_extract_plan(...)` nhận `selected_columns` + 3 biến ngữ cảnh:
+    - `co_so_key`, `nguon_du_lieu_key`, `ma_co_so`.
+  - Dynamic SELECT được ghép dạng:
+    - `[CotWhitelist...] + {co_so_key} AS [CoSoKey] + {nguon_du_lieu_key} AS [NguonDuLieuKey] + '{ma_co_so}' AS [MaCoSo]`.
+
+### 3) Chuẩn hóa Loader/Fact theo biên giao dịch an toàn
+- `src/core/base_loader.py`:
+  - `run_bcp_utf16le(...)` giữ chuẩn cờ `-w -t\t -r\n`.
+  - `run_bcp_in(...)` nhận thêm `destination_connection_string` và giữ chuẩn `-w -k -E -t\t -r\n`.
+  - Log command BCP IN tiếp tục che `-P ******`.
+- `src/jobs/fact_loader.py`:
+  - `FactTableSpec` đổi từ `exclude_datatypes` sang `selected_columns`.
+  - `_execute_core(...)` truyền `selected_columns` + enrichment keys vào Extractor.
+  - Tầng 1 vẫn giữ cô lập Connection A/B quanh BCP IN để chống deadlock.
+
+### 4) Cập nhật tri thức
+- `docs/knowledge/GEM_TECHNICAL_STANDARDS.md`:
+  - Chuẩn Whitelist (`selected_columns`) thay cho Black-list (`exclude_datatypes`).
+  - Chuẩn Dynamic SELECT ghép enrichment keys.
+  - Chuẩn biên giao dịch chống deadlock và bộ cờ BCP OUT/IN.
+- `docs/knowledge/GEM_CODE_MAP.md`:
+  - Bổ sung vai trò mới của Extractor/FactLoader theo kiến trúc Whitelist.
+- `PROJECT_CHRONICLE.md`:
+  - Bổ sung ADR-31/32/33 cho chuyển đổi kiến trúc Whitelist + transaction boundary.
+
+### 5) Danh sách tệp `.py` và `.yaml` bị tác động
+- `.py`:
+  - `src/core/base_extractor.py`
+  - `src/core/base_loader.py`
+  - `src/jobs/fact_loader.py`
+- `.yaml`:
+  - `config/tables.yaml`
+
+## [2026-05-20 16:23] - Xử lý yêu cầu `20260520_1540_sync_incremental_v6.md`
+
+### Tóm tắt thay đổi
+- Hủy bỏ hoàn toàn hướng BCP cho luồng Incremental, quay về nạp PyODBC chunking ổn định.
+- Duy trì cấu hình Whitelist `selected_columns`.
+- Bổ sung script đồng bộ `selected_columns` từ schema `stg_nano_v2`.
+
+### Các tệp đã sửa
+- `src/core/base_extractor.py`
+  - `build_extract_plan(...)` chỉ còn nhận `selected_columns`.
+  - Dynamic SELECT chỉ gồm cột sản xuất từ Whitelist, không ghép enrichment key.
+- `src/core/base_loader.py`
+  - Xóa toàn bộ tiện ích/hàm BCP và parse regex connection string.
+  - Giữ lớp nền transaction/logging cho luồng PyODBC.
+- `src/jobs/fact_loader.py`
+  - Tầng 1 chuyển sang:
+    1. `SELECT` Production bằng PyODBC.
+    2. `TRUNCATE` Landing đúng 1 lần trước loop.
+    3. `fetchmany` + `executemany` theo chunk.
+    4. `commit()` sau khi nạp xong.
+  - Bổ sung hàm build INSERT động tường minh theo `selected_columns`:
+    - `INSERT INTO [stg_nano_v2].[TenBang] ([Col1], [Col2], ...) VALUES (?, ?, ...)`.
+- `scripts/sync_selected_columns_from_staging.py` (mới)
+  - Dùng `STAGING_CONNECTION_STRING`.
+  - Quét `INFORMATION_SCHEMA.COLUMNS` theo `ORDINAL_POSITION` cho 6 bảng incremental.
+  - `.strip()` tên cột, loại `MaCoSo`, `CoSoKey`, `NguonDuLieuKey`.
+  - Hỗ trợ preview YAML hoặc ghi thẳng `config/tables.yaml` bằng `--write`.
+- `config/tables.yaml`
+  - Duy trì `selected_columns` cho các bảng incremental.
+  - Cập nhật chú thích theo chuẩn PyODBC incremental.
+
+### Cập nhật tri thức
+- `docs/knowledge/GEM_TECHNICAL_STANDARDS.md`
+  - Gỡ chuẩn BCP cho incremental, thay bằng chuẩn PyODBC `executemany` + `fast_executemany`.
+  - Chốt quy tắc: TRUNCATE 1 lần ngoài vòng loop, INSERT động tường minh theo Whitelist.
+- `docs/knowledge/GEM_CODE_MAP.md`
+  - Bổ sung mục v6 mô tả đầy đủ thay đổi kiến trúc incremental từ BCP sang PyODBC.
+- `PROJECT_CHRONICLE.md`
+  - Bổ sung ADR-34/35/36 cho quyết định chiến lược bỏ BCP và chuẩn nạp mới.
+
+### Danh sách file Python đã dọn dẹp
+- `src/core/base_extractor.py`
+- `src/core/base_loader.py`
+- `src/jobs/fact_loader.py`
+- `scripts/sync_selected_columns_from_staging.py`
+
+## [2026-05-20 17:19] - Xử lý yêu cầu `20260520_1705_sync_incremental_v7.md`
+
+### Mục tiêu
+- Khắc phục lỗi SQL Server 544 (`IDENTITY_INSERT is set to OFF`) tại luồng Incremental Tầng 1 khi nạp bằng PyODBC.
+
+### File Python đã cập nhật logic
+- `src/jobs/fact_loader.py`
+
+### Nội dung kỹ thuật đã sửa
+- Bổ sung kiểm tra động bảng landing có identity:
+  - `OBJECTPROPERTY(OBJECT_ID(...), 'TableHasIdentity')`.
+- Nếu có identity:
+  - Bật `SET IDENTITY_INSERT ... ON` trước vòng `executemany`.
+  - Bọc vòng nạp chunking trong `try...finally`.
+  - Tắt bắt buộc `SET IDENTITY_INSERT ... OFF` trong `finally` để trả trạng thái an toàn session.
+
+## [2026-05-21 08:42] - Xử lý yêu cầu `20260521_0835_sync_incremental_v8.md`
+
+### Mục tiêu
+- Thực thi quyết định kiến trúc tối hậu: tắt vĩnh viễn `fast_executemany` cho luồng Incremental Tầng 1 để bảo vệ bộ nhớ tuyệt đối trước lỗi `MemoryError` khi gặp cột `NVARCHAR(MAX)/VARCHAR(MAX)`.
+
+### File đã cập nhật
+- `src/jobs/fact_loader.py` (đã dọn dẹp theo chỉ đạo)
+- `docs/knowledge/GEM_TECHNICAL_STANDARDS.md`
+- `PROJECT_CHRONICLE.md`
+- `REPORT_CHANGES.md`
+
+### Nội dung đã thực hiện
+1. Chốt cấu hình nạp Tầng 1 tại `FactLoader._load_to_global_staging`:
+   - Thiết lập tường minh `staging_cursor.fast_executemany = False`.
+   - Không giữ cơ chế fallback tăng/giảm `fast_executemany` trong runtime.
+2. Bảo tồn nguyên vẹn các lớp giáp bắt buộc:
+   - `TRUNCATE` nằm ngoài vòng chunking.
+   - `INSERT INTO ... VALUES ...` động theo `selected_columns`.
+   - Kiểm tra động `TableHasIdentity`.
+   - Khối `try...finally` với lệnh `SET IDENTITY_INSERT ... OFF` trong `finally`.
+3. Cập nhật tri thức kỹ thuật:
+   - `GEM_TECHNICAL_STANDARDS.md` chuyển chuẩn Incremental Tầng 1 sang bắt buộc `fast_executemany = False`, gỡ hướng fallback phức tạp.
+4. Ghi nhận ADR:
+   - `PROJECT_CHRONICLE.md` bổ sung ADR-38 về quyết định đánh đổi tốc độ để lấy an toàn RAM 100%.
+
+### Trích xuất nguyên văn khối logic nạp Tầng 1 đã làm sạch (`src/jobs/fact_loader.py`)
+```python
+    # Tầng 1: Global Transient Staging (PyODBC SELECT -> TRUNCATE 1 lần -> executemany theo chunk)
+    def _load_to_global_staging(self, plan: ExtractPlan) -> None:
+        insert_sql = self._build_explicit_insert_sql(
+            schema_name=self.LANDING_SCHEMA,
+            table_name=plan.table_name,
+            selected_columns=plan.selected_columns,
+        )
+
+        total_rows = 0
+        with pyodbc.connect(self.production_connection, autocommit=True) as production_connection:
+            production_cursor = production_connection.cursor()
+            production_cursor.execute(plan.select_sql)
+
+            with self.get_db_context() as staging_connection:
+                # Nguyên tắc 1: TRUNCATE chỉ chạy đúng 1 lần trước vòng lặp chunking
+                self._truncate_table(staging_connection, self.LANDING_SCHEMA, plan.table_name)
+
+                staging_cursor = staging_connection.cursor()
+                staging_cursor.fast_executemany = False
+                has_identity = self._table_has_identity(staging_cursor, self.LANDING_SCHEMA, plan.table_name)
+
+                if has_identity:
+                    self._log(f"Bật IDENTITY_INSERT cho {self.LANDING_SCHEMA}.{plan.table_name}")
+                    self._set_identity_insert(staging_cursor, self.LANDING_SCHEMA, plan.table_name, enabled=True)
+
+                # Nguyên tắc 2: INSERT động tường minh theo selected_columns
+                try:
+                    while True:
+                        rows = production_cursor.fetchmany(self.batch_size)
+                        if not rows:
+                            break
+
+                        staging_cursor.executemany(insert_sql, rows)
+                        total_rows += len(rows)
+                finally:
+                    if has_identity:
+                        self._set_identity_insert(staging_cursor, self.LANDING_SCHEMA, plan.table_name, enabled=False)
+                        self._log(f"Tắt IDENTITY_INSERT cho {self.LANDING_SCHEMA}.{plan.table_name}")
+
+                staging_connection.commit()
+
+        self._log(
+            f"Hoàn tất nạp Tầng 1 bằng PyODBC cho {plan.table_name}: {total_rows} dòng, chunk_size={self.batch_size}"
+        )
+```
