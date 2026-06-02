@@ -244,6 +244,45 @@
 - Các trang trong `src/ui/pages/` giữ mô hình wrapper function với `@ui.page(...)`.
 - Mỗi request đều khởi tạo instance class mới trong wrapper, không dùng instance toàn cục.
 
+## [2026-06-02] - Xử lý yêu cầu `20260602_1645_sync_FactThuPhiDichVu_MaGoiDichVu_v1.md`
+
+### Tóm tắt
+Master đã chủ động cập nhật hạ tầng Datamart và logic nghiệp vụ phân loại khách hàng. Codex thực hiện cập nhật toàn bộ thông tin vào hệ thống tài liệu tri thức (.md) để đảm bảo tính toàn vẹn Knowledge Base.
+
+### Các tệp đã sửa
+- `docs/knowledge/GEM_DB_SCHEMAS.md` - Bổ sung schema `dm.FactThuPhiDichVu` với trường `MaGoiDichVu` (VARCHAR(50)) và mô tả
+- `docs/knowledge/GEM_DATA_FLOW.md` - Thêm quy tắc phân loại Khách hàng (Quay lại, Tái khám, Trung thành) với 3 quy tắc nghiệp vụ chi tiết
+- `PROJECT_CHRONICLE.md` - Ghi nhận ADR-37 về cập nhật Schema Datamart & Logic Phân loại Khách hàng
+
+### Nội dung đã thực hiện
+
+#### 1. Cập nhật GEM_DB_SCHEMAS.md
+- Thêm phần mới "Cấu trúc bảng Datamart `dm`"
+- Chi tiết bảng `dm.FactThuPhiDichVu` với schema đầy đủ 23 cột
+- Bổ sung cột `MaGoiDichVu` (VARCHAR(50)) với mô tả: "Mã gói dịch vụ - Dùng để phân cụm và định danh bệnh nhân theo Gói Dịch Vụ, phục vụ báo cáo phân khúc khách hàng"
+- Ghi chú: Trường mới phục vụ logic phân tích khách hàng theo gói dịch vụ
+
+#### 2. Cập nhật GEM_DATA_FLOW.md
+- Thêm section mới: **Quy tắc Phân loại Khách hàng (Quay lại, Tái khám, Trung thành)**
+- Quy tắc 1 - Khách quay lại (Cross-sell):
+  - Lần đến viện >= 2 và có phát sinh ít nhất 01 Dịch Vụ mới hoàn toàn
+  - Ứng dụng: Phát hiện cơ hội bán chéo và tăng giá trị vòng đời khách hàng
+- Quy tắc 2 - Khách tái khám (Retention):
+  - Dịch vụ phát sinh thuộc nhóm "Khám bệnh" và chứa từ khóa '%tái khám%'
+  - Ứng dụng: Đo lường tỷ lệ giữ chân khách hàng
+- Quy tắc 3 - Khách trung thành (Loyalty):
+  - Window Function gom nhóm theo `MaBenhNhan` và `MaGoiDichVu`
+  - Số lượng dịch vụ trong gói (PkgRank) >= 2 trong kỳ báo cáo
+  - Ghi chú: Phải join trường `MaGoiDichVu` từ `dm.FactThuPhiDichVu`
+
+#### 3. Cập nhật PROJECT_CHRONICLE.md
+- Thêm ADR-37 với đầy đủ chi tiết về thay đổi schema Datamart và logic nghiệp vụ
+- Ghi nhận không có thay đổi trong khung Python Core
+
+### Ghi chú
+- Tải liệu SQL Template `src/db/templates/sql/fact/merge_fact_thuphichvu_3in1.sql` đã được Master chủ động cập nhật để đồng bộ trường `MaGoiDichVu` từ Tầng 2 lên Tầng 3
+- Khung Python Core không thay đổi do luồng Incremental V2 hỗ trợ đồng bộ metadata động
+
 ## Phạm vi cập nhật theo yêu cầu 20260515_1610_bo_sung_bang_doi_chieu_v1
 - Tạo mới 12 SQL template cho 4 domain dimension:
   - `src/db/templates/sql/dashboard_doichieu/dim_benh_nhan/{production.sql,staging.sql,datamart.sql}`
@@ -396,7 +435,7 @@
   - `DimDichVu`: `DMLoaiDichVu`, `DMDichVu`, `DMDichVuChiTiet` -> `dim_dich_vu_merge.sql`
 - Đã gỡ hoàn toàn `DimLuotKham` khỏi `DimensionLoader` để tránh rủi ro `TRUNCATE` nhầm vào bảng có bản chất incremental.
 
-### 2) Xử lý “tử huyệt” DimDichVu đúng quy tắc
+### 2) Xử lý "tử huyệt" DimDichVu đúng quy tắc
 - Luồng thực thi trong `DimensionLoader` bảo đảm:
   1. TRUNCATE + BCP vào ODS cho `DMLoaiDichVu`
   2. TRUNCATE + BCP vào ODS cho `DMDichVu`
@@ -799,7 +838,7 @@
 
 ### 5) Cập nhật tầng tri thức và nhật ký kiến trúc
 - `GEM_ERROR_CONTEXT.md`: thêm mã lỗi `E-ETL-22005` + nguyên nhân + cách xử lý Masking NULL.
-- `GEM_TECHNICAL_STANDARDS.md`: chuẩn hóa quy tắc Dynamic SELECT kiểu masking và tiêu chuẩn “không log connection string”.
+- `GEM_TECHNICAL_STANDARDS.md`: chuẩn hóa quy tắc Dynamic SELECT kiểu masking và tiêu chuẩn "không log connection string".
 - `GEM_CODE_MAP.md`: cập nhật cấu phần mới (`DynamicColumnProjection`, `projected_columns`, guard Regex doanh thu, sanitize log BCP).
 - `PROJECT_CHRONICLE.md`: ghi nhận ADR-23, ADR-24, ADR-25 cho đợt hotfix ngày 2026-05-20.
 
@@ -1224,3 +1263,36 @@ if self.target_table_name:
 [FactLoader:hanoi] [STAGE-3][SUCCESS] ODS -> Datamart hoàn tất cho bảng ThuPhiDichVu
 [FactLoader:hanoi] Hoàn tất thành công, đã commit
 ```
+
+## Phạm vi cập nhật theo yêu cầu 20260522_0935_change_to_date_auto_pipeline_v1
+- Cập nhật `src/jobs/sync_orchestrator.py`
+- Cập nhật `docs/knowledge/GEM_AUTO_PIPELINE.md`
+- Cập nhật `PROJECT_CHRONICLE.md`
+- Cập nhật `docs/prompts/20260522_0935_change_to_date_auto_pipeline_v1.md`
+
+## Nội dung đã thực hiện
+
+### 1) Chuyen doi chien luoc quet Auto Pipeline sang End-of-Day Batching (T-1)
+- `src/jobs/sync_orchestrator.py`:
+  - Them `timedelta` vao import: `from datetime import date, timedelta`.
+  - Doi dong `effective_to_date = to_date or date.today()` thanh `effective_to_date = to_date or (date.today() - timedelta(days=1))`.
+  - Them log `[SyncOrchestrator] Che do chot so T-1: to_date=...` de de doi soat.
+- Khong can thiep SQL Template, FactLoader, BaseExtractor hay Manual Pipeline.
+
+### 2) Cap nhat tri thuc
+- `docs/knowledge/GEM_AUTO_PIPELINE.md`: Bo sung muc "Quy tac chot so cuoi ngay (T-1)".
+- `PROJECT_CHRONICLE.md`: Ghi nhan su kien 2026-05-22 voi day du van de, giai phap va pham vi anh huong.
+
+### 3) Ket qua doi soat
+Chay giao lap cronjob ngay 22/05/2026, lookback=1:
+- `to_date` = 21/05/2026 (T-1)
+- `from_date` = 21/05/2026 (fallback)
+- `effective_from_date` = 20/05/2026 (sau lookback)
+- Khoang quet SQL: 20/05/2026 -> 21/05/2026
+- Khong lay du lieu ngay hien tai 22/05/2026
+
+### 4) Danh sach tep da chinh sua
+- `src/jobs/sync_orchestrator.py`
+- `docs/knowledge/GEM_AUTO_PIPELINE.md`
+- `PROJECT_CHRONICLE.md`
+- `docs/prompts/20260522_0935_change_to_date_auto_pipeline_v1.md`

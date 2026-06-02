@@ -49,6 +49,13 @@
 - Hard delete incremental chỉ được áp dụng trong cửa sổ D-3 và đúng phạm vi cơ sở.
 - MERGE Fact lên Datamart bắt buộc cô lập theo `NguonDuLieuKey`.
 
+## Quy tắc chốt sổ cuối ngày (T-1)
+- Auto Pipeline chi dung chien luoc End-of-Day Batching (chot so cuoi ngay).
+- Bien `to_date` tai `SyncOrchestrator.run()` mac dinh = `date.today() - timedelta(days=1)` (ngay hom qua).
+- Bien `from_date` duoc tinh tu `to_date` tru di `lookback_days` tu YAML.
+- Tuyet doi khong lay du lieu cua ngay hien tai (T+0).
+- Che do nay CHI ap dung cho Auto Pipeline; Manual Pipeline van nhan input ngay tu UI nguoi dung.
+
 ## Cơ chế Giám sát (Monitoring)
 - Áp dụng tại `DimensionLoader`:
   - Log runtime dùng timestamp đến mili-giây theo format `YYYY-MM-DD HH:MM:SS.mmm` và `flush=True`.

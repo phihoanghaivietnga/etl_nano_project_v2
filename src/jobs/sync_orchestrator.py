@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import os
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import yaml
@@ -157,7 +157,8 @@ class SyncOrchestrator:
         selected_facilities = self._resolve_target_facilities(target_facilities)
         self._validate_target_facilities(selected_facilities)
 
-        effective_to_date = to_date or date.today()
+        effective_to_date = to_date or (date.today() - timedelta(days=1))
+        print(f"[SyncOrchestrator] Chế độ chốt sổ T-1: to_date={effective_to_date}")
         print(f"[SyncOrchestrator] Danh sách facility cần chạy: {selected_facilities}")
 
         for facility_code in selected_facilities:

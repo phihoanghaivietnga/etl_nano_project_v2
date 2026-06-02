@@ -128,6 +128,39 @@ THEN DELETE;
 - Nguồn BH:
   - `TongTienSauTangGiam = TongTien + ISNULL(TienChenhLech, 0)`.
 
+### Quy tắc Phân loại Khách hàng (Quay lại, Tái khám, Trung thành)
+
+Quy tắc phân loại khách hàng được xây dựng dựa trên trường `MaGoiDichVu` từ bảng `dm.FactThuPhiDichVu`, phục vụ đo lường và phân tích hành vi khách hàng theo các gói dịch vụ. Hệ thống áp dụng Window Function để gom nhóm và tính toán.
+
+#### 1. Khách quay lại (Cross-sell)
+**Định nghĩa:** Khách hàng đã từng đến viện và quay trở lại với ít nhất một dịch vụ mới hoàn toàn (chưa từng mua trong quá khứ).
+
+**Điều kiện:**
+- Lần đến viện >= 2
+- Có phát sinh ít nhất 01 Dịch Vụ mới hoàn toàn (chưa từng mua trong quá khứ)
+
+**Ứng dụng:** Phát hiện cơ hội bán chéo và tăng giá trị vòng đời khách hàng.
+
+#### 2. Khách tái khám (Retention)
+**Định nghĩa:** Khách hàng quay lại khám cùng một vấn đề hoặc dịch vụ tương tự đã từng sử dụng trước đó.
+
+**Điều kiện:**
+- Dịch vụ phát sinh thuộc nhóm "Khám bệnh"
+- Có chỉ định tên dịch vụ chứa từ khóa '%tái khám%'
+
+**Ứng dụng:** Đo lường tỷ lệ giữ chân khách hàng và hiệu quả chăm sóc sau điều trị.
+
+#### 3. Khách trung thành (Loyalty)
+**Định nghĩa:** Khách hàng sử dụng nhiều dịch vụ trong cùng một gói dịch vụ, thể hiện sự trung thành cao với cơ sở y tế.
+
+**Điều kiện:**
+- Bắt buộc sử dụng Window Function gom nhóm theo `MaBenhNhan` và `MaGoiDichVu`
+- Điều kiện: Bắt buộc sử dụng Window Function gom nhóm theo MaBenhNhan và MaGoiDichVu. Điều kiện: Số lượng dịch vụ sử dụng trong gói (PkgRank) >= 2 trong kỳ báo cáo. (Ghi chú: Phải join trường MaGoiDichVu từ dm.FactThuPhiDichVu để phục vụ logic này)
+
+**Ghi chú kỹ thuật:** Phải join trường `MaGoiDichVu` từ `dm.FactThuPhiDichVu` để phục vụ logic phân tích này.
+
+**Ứng dụng:** Xác định khách hàng trung thành để thực hiện chính sách ưu đãi và giữ chân.
+
 ### Early Arriving Facts và Seed Data
 - Các khóa dimension của fact phải fallback về seed:
   - `ISNULL(LuotKhamKey, -1)`
