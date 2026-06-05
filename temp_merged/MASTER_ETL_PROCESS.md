@@ -1915,7 +1915,8 @@ USING (
 
         dv.SoHoaDon,
         dv.DaThucHien,
-        dv.TrangThaiPhieu
+        dv.TrangThaiPhieu,
+        dv.MaGoiDichVu
 
     -- FIX v1.8.0 E020: Pre-aggregate ThuPhiTangGiam bang subquery de tranh nhan ban
     -- Nếu cùng MaHoSo+MaChiTieu+MaPhieuDichVu có N dòng TG -> SUM(N) = TongGiam
@@ -1993,7 +1994,8 @@ USING (
 
         bh.SoHoaDon,
         NULL                                        AS DaThucHien,   -- BH không có cột này
-        bh.TrangThaiPhieu
+        bh.TrangThaiPhieu,
+        bn.MaGoiDichVu
 
     FROM [{staging_schema}].[ThuPhiBaoHiem] bh WITH (NOLOCK)
     WHERE bh.DaDongTien = 1
@@ -2035,6 +2037,7 @@ WHEN MATCHED THEN
         target.DaThucHien           = source.DaThucHien,
         target.TrangThaiPhieu       = source.TrangThaiPhieu,
         target.NgayDenKham          = source.NgayDenKham
+        target.MaGoiDichVu           = source.MaGoiDichVu
 
 -- ============================================================
 -- WHEN NOT MATCHED: Insert bản ghi mới
@@ -2061,7 +2064,8 @@ WHEN NOT MATCHED BY TARGET THEN
         SoHoaDon,
         DoanhThu,
         DaThucHien,
-        TrangThaiPhieu
+        TrangThaiPhieu,
+        MaGoiDichVu
     )
     VALUES (
         source.NguonDuLieuKey,
@@ -2113,7 +2117,8 @@ WHEN NOT MATCHED BY TARGET THEN
         source.SoHoaDon,
         ISNULL(CAST(source.TongTienSauTangGiam AS FLOAT), 0),  -- DoanhThu = TongTienSauTangGiam
         source.DaThucHien,
-        source.TrangThaiPhieu
+        source.TrangThaiPhieu,
+        source.MaGoiDichVu
     );
 	
 /*
@@ -2678,7 +2683,7 @@ from __future__ import annotations
 import argparse
 import os
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import yaml
@@ -2832,7 +2837,8 @@ class SyncOrchestrator:
         selected_facilities = self._resolve_target_facilities(target_facilities)
         self._validate_target_facilities(selected_facilities)
 
-        effective_to_date = to_date or date.today()
+        effective_to_date = to_date or (date.today() - timedelta(days=1))
+        print(f"[SyncOrchestrator] Chế độ chốt sổ T-1: to_date={effective_to_date}")
         print(f"[SyncOrchestrator] Danh sách facility cần chạy: {selected_facilities}")
 
         for facility_code in selected_facilities:

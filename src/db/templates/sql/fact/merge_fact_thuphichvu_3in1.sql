@@ -195,7 +195,7 @@ USING (
         bh.SoHoaDon,
         NULL                                        AS DaThucHien,   -- BH không có cột này
         bh.TrangThaiPhieu,
-        bn.MaGoiDichVu
+        bh.MaGoiDichVu
 
     FROM [{staging_schema}].[ThuPhiBaoHiem] bh WITH (NOLOCK)
     WHERE bh.DaDongTien = 1
@@ -236,7 +236,7 @@ WHEN MATCHED THEN
         target.DoanhThu             = ISNULL(CAST(source.TongTienSauTangGiam AS FLOAT), 0),
         target.DaThucHien           = source.DaThucHien,
         target.TrangThaiPhieu       = source.TrangThaiPhieu,
-        target.NgayDenKham          = source.NgayDenKham
+        target.NgayDenKham          = source.NgayDenKham,
         target.MaGoiDichVu           = source.MaGoiDichVu
 
 -- ============================================================
